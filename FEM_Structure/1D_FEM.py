@@ -1,13 +1,19 @@
 import numpy as np
 
+'''
+Ideally, FEM infrastructure should not change depending on physics, i.e. between heat, 
+diffusion, elasticity, nonlinear elasticity, etc. It should only know how to
+integrate, assemble, solve. The physics supplies the constitutive law and source terms.
+'''
 
-# 1) -------------------------------------------------------------------------------------------------
-# Create a mesh with n elements on the interval I and define the corresponding space of continuous
-# piecewise linear functions V_{h,0}.
+
+
+# -------------------------------------------------------------------------------------------------
+# Create a uniform mesh with n elements on the interval I = [start, end] and define 
+# the corresponding space of continuous piecewise linear functions V_{h,0}.
 # ----------------------------------------------------------------------------------------------------
-
 def create_mesh(n: int, start: float, end: float):
-    # Create a uniform mesh with n elements on the interval I = [start, end]
+    # 
     nodes = np.linspace(start, end, n + 1) # generates an array of evenly spaced numbers over range I
 
     return nodes
@@ -35,35 +41,3 @@ def boundary_conditions():
 
 def newton_solve():
     return 0
-
-
-
-
-
-
-
-# 2) -------------------------------------------------------------------------------------------------
-# Solve the linear system Ae = b, where A is the stiffness matrix and b is the load vector. 
-# Use appropriate boundary conditions for the problem.
-# ----------------------------------------------------------------------------------------------------
-
-
-def linear_solve(start, end, n:int, kappa, a, f, g):
-    nodes = create_mesh(n, start, end)
-    A = construct_stiffness_matrix(n, nodes, kappa, a)
-    b = construct_load_vector(n, nodes, f)
-
-    # Apply boundary conditions
-    b[0] += kappa[0] * g[0]  # u(0) = g[0]
-    b[n] += kappa[1] * g[1]  # u(L) = g[1]
-
-    # Solve the linear system Ae = b
-    e = np.linalg.solve(A, b)
-
-    return e, nodes
-
-
-
-
-    
-
