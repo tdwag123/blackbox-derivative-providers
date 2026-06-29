@@ -112,7 +112,11 @@ def gl2_quadrature_integration(f, a, b, dim: int):
     return result
 
 
-def shape_functions(x, nodes, n):
+# -------------------------------------------------------------------------------------------------
+# Note: An n-point Gauss-Legendre quadrature can perfectly integrate any polynomial of degree < 2n.
+# Using 2-point Gauss-Legendre quadrature, integrate a function f(x) from a to b.
+# ----------------------------------------------------------------------------------------------------
+def shape_functions(xi):
     return 0
 
 
