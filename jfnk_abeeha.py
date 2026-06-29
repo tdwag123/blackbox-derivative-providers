@@ -33,7 +33,7 @@ def jacobianApprox(R, u, epsilon = 1e-8):
     
     # approximate matrix-vec product Jv
     def matvec(v):
-        R_uplusev = R(u + epsilon * v)
+        R_uplusev = R(u + epsilon * v) # u plus ev
         return (R_uplusev - R_u)/epsilon
     
     # construct the JF lin map
