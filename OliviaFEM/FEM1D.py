@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from utils import *
 
 def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
@@ -130,7 +131,9 @@ input:
     if q_BCR is not None:
         R[-1] += q_BCR
 
-    return R, lower, diag, upper
+    num_evals = 4 * n_nodes-1 # flux law evals computation: 4 calls per finite element
+
+    return R, lower, diag, upper, num_evals
 
 def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
     '''
@@ -192,11 +195,14 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
 
     log = []
     num_iter = 0
+    num_evals = 0
 
     for iteration in range(maxiter):
         num_iter += 1
         
-        R, lower, diag, upper = residAndTan(x, U, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+        R, lower, diag, upper, evals = residAndTan(x, U, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+
+        num_evals += evals
 
         # construct the effective residual in the case of dirichlet BC
         R_eff = R[start:end]
@@ -207,7 +213,7 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
             print(f"Newton {iteration:2d}: ||R_eff||_2 = {norm_R:.3e}")
             
         if norm_R < tol:
-            return U, log, num_iter
+            return U, log, num_iter, num_evals
 
         lower_eff, diag_eff, upper_eff = tridiag_block(lower, diag, upper, start, end)
 
@@ -225,7 +231,9 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
                 if right_dirich:
                     U_trial[-1] = TR
 
-                R_trial, _, _, _ = residAndTan(x, U_trial, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+                R_trial, _, _, _, evals_trial = residAndTan(x, U_trial, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+
+                num_evals += evals_trial
                 
                 norm_trial = np.linalg.norm(R_trial[start:end], ord=2)
                 
@@ -253,3 +261,24 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
         U = U_trial
         
     raise RuntimeError("NM didn't converge within desired number maxiter")
+
+'''Wraps NM routine and returns: solution, number of iterations, number of flux law evaluations, elapsed time, error (if applicable)'''
+def FEM_wrapper(interval, n_elems, fluxDerivs, source, TL, TR, verbose=True, solution=None):
+    x = np.linspace(interval[0],interval[1],n_elems+1) # generate mesh
+    start_time = time.perf_counter()
+
+    U, log, iters, evals = NM(x, fluxDerivs, source, TL, TR, verbose=verbose)
+    print(f"\nFEM solution U:\n{U}")
+    print(f"\nNewton iterations: {iters}")
+    print(f"Flux law evaluations: {evals}")
+
+    elapsed_time = time.perf_counter() - start_time 
+    print(f"Elapsed time: {elapsed_time}")
+    
+    solution_err = -1
+    if solution:
+        U_exact = solution(x)
+        solution_err = np.linalg.norm(U-U_exact,ord=2) / np.linalg.norm(U_exact,ord=2)
+        print(f"Solution error: {solution_err}")
+    
+    return U, iters, evals, elapsed_time, solution_err
