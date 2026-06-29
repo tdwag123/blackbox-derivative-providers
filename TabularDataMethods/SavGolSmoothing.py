@@ -37,7 +37,9 @@ def quadratic_savgol_smoothing(z_data, q_data, K, h):
     q_data = np.asarray(q_data, dtype=float)
 
     N = z_data.shape[0]
+    p = z_data.shape[1]
     q_smooth = np.zeros(N)
+    dq_dz = np.zeros((N, p))
 
     for i in range (N):
         z0= z_data[i]
@@ -72,8 +74,9 @@ def quadratic_savgol_smoothing(z_data, q_data, K, h):
         beta, _, _, _ = np.linalg.lstsq(Phi_weighted, q_weighted, rcond=None)
 
         q_smooth[i] = beta[0]
+        dq_dz[i, :] = beta[1:1 + p]
 
-    return q_smooth
+    return q_smooth, dq_dz
 
 
 
@@ -90,7 +93,7 @@ if __name__ == "__main__":
     q_true = 2.0 + 0.5 * gx - 0.2 * T + 0.1 * gx**2
     q_noisy = q_true + 0.2 * np.random.randn(N)
 
-    q_smooth = quadratic_savgol_smoothing(
+    q_smooth, dq_dz = quadratic_savgol_smoothing(
         z_data=z_data,
         q_data=q_noisy,
         K=15,
@@ -102,3 +105,8 @@ if __name__ == "__main__":
 
     for i in range(10):
         print(f"{i:5d} | {q_noisy[i]:7.3f} | {q_smooth[i]:7.3f} | {q_true[i]:7.3f}")
+
+    print("\nFirst 10 derivative estimates:")
+    print("index | dq/dgx | dq/dT")
+    for i in range(10):
+        print(f"{i:5d} | {dq_dz[i, 0]:7.3f} | {dq_dz[i, 1]:7.3f}")
