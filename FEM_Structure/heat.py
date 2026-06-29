@@ -1,4 +1,4 @@
-import reiyah_linear1D_FEM as fem
+import fem as fem
 import matplotlib.pyplot as plt
 
 
