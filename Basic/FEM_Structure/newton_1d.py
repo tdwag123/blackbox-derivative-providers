@@ -8,7 +8,9 @@ Ideal
 
 def newton_linear_elements(f, max_it):
     for k in range(0, max_it):
-        G = 
+        # G = 
+
+        return 0
 
 
     return 0
