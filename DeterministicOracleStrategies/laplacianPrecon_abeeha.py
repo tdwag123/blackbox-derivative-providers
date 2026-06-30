@@ -62,11 +62,9 @@ def buildLap(unknowns, stepsizes):
 """
 define and return matrix-vector action as a linear operator for preconditioner 
 M = Pinv
-
 """
 
 def M(P):
-    
     solverP = factorized(P) # factorized works with an LU decomp
     n = P.shape[0]
     
