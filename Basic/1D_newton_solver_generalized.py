@@ -188,12 +188,12 @@ def tridiag_block(lower, diag, upper, start, end):
 #               = - int N_i' [phi_s N_j' + phi_T N_j] dx    - int N_i r_T N_j dx.
 # -------------------------------------------------------------------------------------------------
 
-def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
+def resid_and_tan(x, U, flux_law, r, rT = None, q_BCL = None, q_BCR = None):
     """
     Input: 
         x : vector containing position coordinates
         U : vector containing nodal temperature values (unknown, to be solved in NM for T estimate)
-        fluxLaw: analytic constitive map, nonlinear putting q = phi(T, T', x; m)
+        flux_law: analytic constitive map, nonlinear putting q = phi(T, T', x; m)
             callable; returns (q, phi_T', phi_T)
         r: heat source
             callable; returns r(T, xg) returns source value
@@ -251,7 +251,7 @@ def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
             Tg_prime = dNdx @ Ue
 
             # constitutive flux law and heat source evaluated at quadrature point 
-            qg, phi_s, phi_T = fluxLaw(Tg_prime, Tg, xg)
+            qg, phi_s, phi_T = flux_law(Tg_prime, Tg, xg)
             rg = r(Tg, xg)
 
             # residual integrand
@@ -264,7 +264,7 @@ def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
             Tg = N @ Ue
             Tg_prime = dNdx @ Ue
 
-            qg, phi_s, phi_T = fluxLaw(Tg_prime, Tg, xg)
+            qg, phi_s, phi_T = flux_law(Tg_prime, Tg, xg)
             rTg = rT(Tg, xg)
 
             # Flux tangent component:
@@ -308,7 +308,7 @@ some things to keep in mind on boundary conditions
 (2) Neumann fluxes (q_BCL, q_BCR); Put None if Dirichlet
 (3) Dirichlet-Neumann possible with Robin-Type BC
 """
-def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
+def NM(x, flux_law, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
     
     x = np.asarray(x, dtype=float)
     n_nodes = len(x)
@@ -364,7 +364,7 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
 
     for iteration in range(maxiter):
         
-        R, lower, diag, upper = residAndTan(x, U, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+        R, lower, diag, upper = resid_and_tan(x, U, flux_law, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
 
         # construct the effective residual in the case of dirichlet BC
         R_eff = R[start:end]
@@ -393,7 +393,7 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
                 if right_dirich:
                     U_trial[-1] = TR
 
-                R_trial, _, _, _ = residAndTan(x, U_trial, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+                R_trial, _, _, _ = resid_and_tan(x, U_trial, flux_law, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
                 
                 norm_trial = np.linalg.norm(R_trial[start:end], ord=2)
                 
