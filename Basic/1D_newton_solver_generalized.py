@@ -318,7 +318,6 @@ def NM(x, flux_law, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-
         rT: dr/dT; if T-independent, None
         q_BCL: left boundary condition (Neumann)
         q_BCR: right boundary condition (Neumann)
-    (FACT CHECK): If Dirichlet boundaries here, simply preallocate U_0, U_L = TL, TR
     """
     x = np.asarray(x, dtype=float)
     n_nodes = len(x)
