@@ -164,7 +164,7 @@ def thomas_solve(lower, diagonal, upper, rhs):
 
 
 # Extracts tridiagonal block for Dirichlet boundary conditions
-# recall: with Dirichlet BC, don's solve for boundary values
+# recall: with Dirichlet BC, don't solve for boundary values
 # if T(0) = TL, T(L) = TR, U0 = TL, UN = TR
 def tridiag_block(lower, diag, upper, start, end):
     diag_f = diag[start:end].copy()
@@ -360,6 +360,8 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
 
     log = []
 
+    count = 0
+
     for iteration in range(maxiter):
         
         R, lower, diag, upper = residAndTan(x, U, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
@@ -417,7 +419,10 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
 
         # update U 
         U = U_trial
-        
+
+        # update count 
+        count += 1
+
     raise RuntimeError("NM didn't converge within desired number maxiter")
 
 
@@ -441,7 +446,7 @@ def fluxLinSanityCheck(T_prime, T, xg):
 # since q = -T', q' = r = 1, we have -T'' = 1. use Dirichlet BC T(0) = 0, T(1) = 0. 
 U_exact = lambda x: 0.5*x*(1.0-x)
 
-U_sanity, log_sanity = NM(x, fluxLinSanityCheck, source, TL = 0.0, TR = 0.0, verbose = True)
+U_sanity, log_sanity, num_iterations_sanity = NM(x, fluxLinSanityCheck, source, TL = 0.0, TR = 0.0, verbose = True)
 print("\nLinear Sanity check solution U:\n")
 for i in range(len(U_sanity)):
     print(U_sanity[i])
@@ -450,6 +455,8 @@ U_true = U_exact(x)
 error_vec = U_sanity - U_true
 error = np.linalg.norm(error_vec, ord=2)
 print(error)
+print("\nNumber of Newton Iterations:\n")
+print(num_iterations_sanity)
 print("\n")
 
 def fluxNonlinExample(T_prime, T, xg):
@@ -465,7 +472,9 @@ def fluxNonlinExample(T_prime, T, xg):
 
 # using Dirichlet BC TL = TR = 0.0
 
-U_test, log_test = NM(x, fluxNonlinExample, source, TL = 0.0, TR = 0.0, verbose = True)
+U_test, log_test, num_iterations_test = NM(x, fluxNonlinExample, source, TL = 0.0, TR = 0.0, verbose = True)
 print("\nNonlinear solution U:\n")
 for i in range(len(U_test)):
     print(U_test[i])
+print("\nNumber of Newton Iterations:\n")
+print(num_iterations_test)
