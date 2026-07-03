@@ -301,15 +301,25 @@ def resid_and_tan(x, U, flux_law, r, rT = None, q_BCL = None, q_BCR = None):
 # -------------------------------------------------------------------------------------------------
 # NEWTON SOLVER FOR NODAL TEMPERATURE VECTOR U
 # -------------------------------------------------------------------------------------------------
-
 """
-some things to keep in mind on boundary conditions
+Note on boundary conditions:
 (1) Dirichlet temperatures (TL, TR); Put None if Neumann
 (2) Neumann fluxes (q_BCL, q_BCR); Put None if Dirichlet
 (3) Dirichlet-Neumann possible with Robin-Type BC
 """
 def NM(x, flux_law, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
-    
+    """
+    Input:
+        x : vector containing position coordinates
+        flux_law: analytic constitive map, nonlinear putting q = phi(T, T', x; m)
+            callable; returns (q, phi_T', phi_T)
+        r: heat source
+            callable; returns r(T, xg) returns source value
+        rT: dr/dT; if T-independent, None
+        q_BCL: left boundary condition (Neumann)
+        q_BCR: right boundary condition (Neumann)
+    (FACT CHECK): If Dirichlet boundaries here, simply preallocate U_0, U_L = TL, TR
+    """
     x = np.asarray(x, dtype=float)
     n_nodes = len(x)
 
