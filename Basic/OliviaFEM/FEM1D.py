@@ -135,7 +135,7 @@ input:
 
     return R, lower, diag, upper, num_evals
 
-def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
+def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=100, verbose=True, line_search=False):
     '''
     NEWTON SOLVER FOR NODAL TEMPERATURE VECTOR U
 
