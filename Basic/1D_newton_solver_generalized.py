@@ -164,7 +164,7 @@ def thomas_solve(lower, diagonal, upper, rhs):
 
 
 # Extracts tridiagonal block for Dirichlet boundary conditions
-# recall: with Dirichlet BC, don's solve for boundary values
+# recall: with Dirichlet BC, don't solve for boundary values
 # if T(0) = TL, T(L) = TR, U0 = TL, UN = TR
 def tridiag_block(lower, diag, upper, start, end):
     diag_f = diag[start:end].copy()
@@ -188,12 +188,12 @@ def tridiag_block(lower, diag, upper, start, end):
 #               = - int N_i' [phi_s N_j' + phi_T N_j] dx    - int N_i r_T N_j dx.
 # -------------------------------------------------------------------------------------------------
 
-def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
+def resid_and_tan(x, U, flux_law, r, rT = None, q_BCL = None, q_BCR = None):
     """
     Input: 
         x : vector containing position coordinates
         U : vector containing nodal temperature values (unknown, to be solved in NM for T estimate)
-        fluxLaw: analytic constitive map, nonlinear putting q = phi(T, T', x; m)
+        flux_law: analytic constitive map, nonlinear putting q = phi(T, T', x; m)
             callable; returns (q, phi_T', phi_T)
         r: heat source
             callable; returns r(T, xg) returns source value
@@ -251,7 +251,7 @@ def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
             Tg_prime = dNdx @ Ue
 
             # constitutive flux law and heat source evaluated at quadrature point 
-            qg, phi_s, phi_T = fluxLaw(Tg_prime, Tg, xg)
+            qg, phi_s, phi_T = flux_law(Tg_prime, Tg, xg)
             rg = r(Tg, xg)
 
             # residual integrand
@@ -264,7 +264,7 @@ def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
             Tg = N @ Ue
             Tg_prime = dNdx @ Ue
 
-            qg, phi_s, phi_T = fluxLaw(Tg_prime, Tg, xg)
+            qg, phi_s, phi_T = flux_law(Tg_prime, Tg, xg)
             rTg = rT(Tg, xg)
 
             # Flux tangent component:
@@ -301,15 +301,24 @@ def residAndTan(x, U, fluxLaw, r, rT = None, q_BCL = None, q_BCR = None):
 # -------------------------------------------------------------------------------------------------
 # NEWTON SOLVER FOR NODAL TEMPERATURE VECTOR U
 # -------------------------------------------------------------------------------------------------
-
 """
-some things to keep in mind on boundary conditions
+Note on boundary conditions:
 (1) Dirichlet temperatures (TL, TR); Put None if Neumann
 (2) Neumann fluxes (q_BCL, q_BCR); Put None if Dirichlet
 (3) Dirichlet-Neumann possible with Robin-Type BC
 """
-def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
-    
+def NM(x, flux_law, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-10, maxiter=30, verbose=True, line_search=True):
+    """
+    Input:
+        x : vector containing position coordinates
+        flux_law: analytic constitive map, nonlinear putting q = phi(T, T', x; m)
+            callable; returns (q, phi_T', phi_T)
+        r: heat source
+            callable; returns r(T, xg) returns source value
+        rT: dr/dT; if T-independent, None
+        q_BCL: left boundary condition (Neumann)
+        q_BCR: right boundary condition (Neumann)
+    """
     x = np.asarray(x, dtype=float)
     n_nodes = len(x)
 
@@ -360,9 +369,11 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
 
     log = []
 
+    count = 0
+
     for iteration in range(maxiter):
         
-        R, lower, diag, upper = residAndTan(x, U, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+        R, lower, diag, upper = resid_and_tan(x, U, flux_law, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
 
         # construct the effective residual in the case of dirichlet BC
         R_eff = R[start:end]
@@ -391,7 +402,7 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
                 if right_dirich:
                     U_trial[-1] = TR
 
-                R_trial, _, _, _ = residAndTan(x, U_trial, fluxLaw, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
+                R_trial, _, _, _ = resid_and_tan(x, U_trial, flux_law, r, rT=rT, q_BCL=q_BCL, q_BCR=q_BCR)
                 
                 norm_trial = np.linalg.norm(R_trial[start:end], ord=2)
                 
@@ -417,7 +428,10 @@ def NM(x, fluxLaw, r, TL, TR, rT=None, U0=None, q_BCL=None, q_BCR=None, tol=1e-1
 
         # update U 
         U = U_trial
-        
+
+        # update count 
+        count += 1
+
     raise RuntimeError("NM didn't converge within desired number maxiter")
 
 
@@ -441,7 +455,7 @@ def fluxLinSanityCheck(T_prime, T, xg):
 # since q = -T', q' = r = 1, we have -T'' = 1. use Dirichlet BC T(0) = 0, T(1) = 0. 
 U_exact = lambda x: 0.5*x*(1.0-x)
 
-U_sanity, log_sanity = NM(x, fluxLinSanityCheck, source, TL = 0.0, TR = 0.0, verbose = True)
+U_sanity, log_sanity, num_iterations_sanity = NM(x, fluxLinSanityCheck, source, TL = 0.0, TR = 0.0, verbose = True)
 print("\nLinear Sanity check solution U:\n")
 for i in range(len(U_sanity)):
     print(U_sanity[i])
@@ -450,6 +464,8 @@ U_true = U_exact(x)
 error_vec = U_sanity - U_true
 error = np.linalg.norm(error_vec, ord=2)
 print(error)
+print("\nNumber of Newton Iterations:\n")
+print(num_iterations_sanity)
 print("\n")
 
 def fluxNonlinExample(T_prime, T, xg):
@@ -465,7 +481,9 @@ def fluxNonlinExample(T_prime, T, xg):
 
 # using Dirichlet BC TL = TR = 0.0
 
-U_test, log_test = NM(x, fluxNonlinExample, source, TL = 0.0, TR = 0.0, verbose = True)
+U_test, log_test, num_iterations_test = NM(x, fluxNonlinExample, source, TL = 0.0, TR = 0.0, verbose = True)
 print("\nNonlinear solution U:\n")
 for i in range(len(U_test)):
     print(U_test[i])
+print("\nNumber of Newton Iterations:\n")
+print(num_iterations_test)
