@@ -4,7 +4,8 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 
 # MLP code adapted from https://docs.jax.dev/en/latest/notebooks/neural_network_with_tfds_data.html
-# could do this MUCH more easily probably.. (use NN library that works with JAX)
+# could do this MUCH more easily probably.. (use NN library maybe flax that works with JAX)
+# installing jax: conda install 'jax' and 'jaxlib'
 
 def _random_layer_params(in_features, out_features, key):
     weight_key, _ = random.split(key)
@@ -75,6 +76,8 @@ class BasicMLP:
         self.history_ = None
         self.x_mean_ = None
         self.x_std_ = None
+        
+        self.gradient = None
 
     def fit(self, x, y):
         x_train = self._prepare_x(x)
@@ -122,6 +125,8 @@ class BasicMLP:
                 )
                 print(message)
 
+        self.gradient = grad(self.f)
+
         return self
 
     def predict(self, x):
@@ -161,6 +166,31 @@ class BasicMLP:
         x = self._prepare_x(x)
         return (x - self.x_mean_) / self.x_std_
 
+    def evaluate(self, s_q, T_q):
+        '''Wrapper function for returning flux and derivatives at quadrature states'''
+        if self.gradient is None:
+            raise ValueError("oops")
+
+        if self.input_dim_ != 2:
+            raise ValueError("mismatch :(")
+
+        s_q = np.atleast_1d(np.asarray(s_q, dtype=float))
+        T_q = np.atleast_1d(np.asarray(T_q, dtype=float))
+
+        if s_q.shape != T_q.shape:
+            raise ValueError("s_q and T_q must have the same shape")
+
+        state = np.column_stack((s_q, T_q))
+        state_sc = self._scale_x(state)
+        grad_sc = vmap(self.gradient)(state_sc)
+        grad = grad_sc / self.x_std_
+
+        q_g = self.predict(state)
+        a_g = grad[:,0]
+        b_g = grad[:,1]
+
+        return q_g, a_g, b_g
+
     @staticmethod
     def _prepare_x(x): # (watch out if passing in 1 sample)
         array = jnp.asarray(x, dtype=jnp.float32)
@@ -198,20 +228,16 @@ if __name__ == "__main__":
     X_test = features_test[:,0:2]
     y_test = targets_test[:,1]
 
-    model = BasicMLP(scale_inputs=False, num_epochs = 200)
+    model = BasicMLP(scale_inputs=True, num_epochs = 200)
     model.fit(X_train, y_train)
-
+    q, a, b = model.evaluate(X_test[:,0], X_test[:,1])
+    
     print("\nR2 scores on test set:")
-    print(f"q R2: {model.score(y_test, model.predict(X_test))}")
+    print(f"q: {model.score(y_test, q)}")
+    print(f"dq/ds: {model.score(targets_test[:,2], a)}")
+    print(f"dq/dT: {model.score(targets_test[:,3], b)}")
 
-    grad_single = grad(model.f)
-    grad_pred_sc = vmap(grad_single)(model._scale_x(X_test))
-    grad_pred = grad_pred_sc / model.x_std_
-
-    print(f"dq/ds R2: {model.score(targets_test[:,2], grad_pred[:,0])}")
-    print(f"dq/dT R2: {model.score(targets_test[:,3], grad_pred[:,1])}")
-
-    print("\nRMS error on test set:")
-    print(f"q RMSE: {rmse(y_test, model.predict(X_test))}")
-    print(f"dq/ds RMSE: {rmse(targets_test[:,2], grad_pred[:,0])}")
-    print(f"dq/dT RMSE: {rmse(targets_test[:,3], grad_pred[:,1])}")
+    print("\nRMSE on test set:") # FIXME: should report scaled RMSE
+    print(f"q: {rmse(y_test, q)}")
+    print(f"dq/ds: {rmse(targets_test[:,2], a)}")
+    print(f"dq/dT: {rmse(targets_test[:,3], b)}")
