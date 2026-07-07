@@ -158,6 +158,11 @@ def example_simple_1d():
     print("Test RMSE for dq:", test_dq_rmse)
 
 
+
+"""
+Note: FOR REAL 2D DATA, SHOULD NORMALIZE INPUT COLUMNS TO SIMILAR RANGES BEFORE PROCEEDING
+No normalization of inputs occurs in this code
+"""
 def example_2d():
     return 0
 
