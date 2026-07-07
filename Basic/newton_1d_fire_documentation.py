@@ -458,26 +458,26 @@ def fluxLinSanityCheck(T_prime, T, xg):
     return q, dphi_ds, dphi_dT
 
 
-# Since q = -T' and q' = r = 1, this reduces to -T'' = 1 with T(0) = T(1) = 0,
-# which has the closed-form solution below -- useful for verifying the solver.
-U_exact = lambda x: 0.5 * x * (1.0 - x)
+def fluxLinSanityCheck_execute():
+    # Since q = -T' and q' = r = 1, this reduces to -T'' = 1 with T(0) = T(1) = 0,
+    # which has the closed-form solution below -- useful for verifying the solver.
 
-U_sanity, log_sanity, num_iterations_sanity = NM(
-    x, fluxLinSanityCheck, source, T_dirichlet_left=0.0, T_dirichlet_right=0.0, verbose=True
-)
-print("\nLinear Sanity check solution U:\n")
-for i in range(len(U_sanity)):
-    print(U_sanity[i])
+    U_exact = lambda x: 0.5 * x * (1.0 - x)
 
-print("\nError between NM U and exact U (2-norm of U_sanity - U_true):\n")
-U_true = U_exact(x)
-error_vec = U_sanity - U_true
-error = np.linalg.norm(error_vec, ord=2)
-print(error)
+    U_sanity, log_sanity, num_iterations_sanity = NM(x, fluxLinSanityCheck, source, T_dirichlet_left=0.0, T_dirichlet_right=0.0, verbose=True)
+    print("\nLinear Sanity check solution U:\n")
+    for i in range(len(U_sanity)):
+        print(U_sanity[i])
 
-print("\nNumber of Newton Iterations:\n")
-print(num_iterations_sanity)
-print("\n")
+    print("\nError between NM U and exact U (2-norm of U_sanity - U_true):\n")
+    U_true = U_exact(x)
+    error_vec = U_sanity - U_true
+    error = np.linalg.norm(error_vec, ord=2)
+    print(error)
+
+    print("\nNumber of Newton Iterations:\n")
+    print(num_iterations_sanity)
+    print("\n")
 
 
 def fluxNonlinExample(T_prime, T, xg):
@@ -491,13 +491,17 @@ def fluxNonlinExample(T_prime, T, xg):
 
     return q, dphi_ds, dphi_dT
 
+def fluxNonlinExample_execute():
+    U_test, log_test, num_iterations_test = NM(
+        x, fluxNonlinExample, source, T_dirichlet_left=0.0, T_dirichlet_right=0.0, verbose=True
+    )
+    print("\nNonlinear solution U:\n")
+    for i in range(len(U_test)):
+        print(U_test[i])
 
-U_test, log_test, num_iterations_test = NM(
-    x, fluxNonlinExample, source, T_dirichlet_left=0.0, T_dirichlet_right=0.0, verbose=True
-)
-print("\nNonlinear solution U:\n")
-for i in range(len(U_test)):
-    print(U_test[i])
+    print("\nNumber of Newton Iterations:\n")
+    print(num_iterations_test)
 
-print("\nNumber of Newton Iterations:\n")
-print(num_iterations_test)
+if __name__ == "__main__":
+    fluxLinSanityCheck_execute()
+    fluxNonlinExample_execute()
