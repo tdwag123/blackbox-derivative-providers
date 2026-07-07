@@ -59,7 +59,7 @@ class RFFModel():
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-def example_1d():
+def example_simple_1d():
     """
     Creates sample s_data -> reshape into (N,1) -> compute q_data -> fit() -> predict()
     s_data: vector of input values
@@ -82,9 +82,31 @@ def example_1d():
     model.fit(X, q_data)
     q_pred = model.predict(X)
 
-    print(f"vector of input values: {s_data}")
-    print(f"vector of target values: {q_data}")
-    print(f"predictions: {q_pred}")
+    # mean squared error
+    train_mse_noisy = np.mean((q_pred - q_data)**2)
+    train_mse_true = np.mean((q_pred - q_true(s_data))**2)
+
+    print("MSE vs noisy data:", train_mse_noisy)
+    print("MSE vs true function:", train_mse_true)
+
+
+    s_test = np.linspace(-2.0, 2.0, 400)
+    X_test = s_test.reshape(-1, 1)
+
+    q_test_true = q_true(s_test)
+    q_test_pred = model.predict(X_test)
+
+    # mean squared error    
+    test_mse = np.mean((q_test_pred - q_test_true)**2)
+    print("Test MSE:", test_mse)
+
+    # print(f"vector of input values: {s_data}")
+    # print(f"vector of target values: {q_data}")
+    # print(f"predictions: {q_pred}")
+
+
+def example_2d():
+    return 0
 
 if __name__ == "__main__":
     example_1d()
