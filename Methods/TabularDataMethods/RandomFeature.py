@@ -25,6 +25,7 @@ class RFFModel():
                                             https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html
         """
 
+        self.n_components = n_components
         self.feature_map = RBFSampler(
             n_components=n_components, 
             gamma=gamma, 
@@ -44,6 +45,13 @@ class RFFModel():
         y = target vector; 1D array of shape (n_samples, ) holding target values
         """
 
+        y = np.asarray(y)
+        if y.ndim > 1 and y.shape[1] > 1:
+            raise ValueError(f"y has shape {y.shape}, which looks like {y.shape[1]} targets."
+            "RFFModel.predict_dq_dX only supports single-output regression. "
+            "Fit a separate RFFModel per output column instead."
+        )
+    
         new_X = self.feature_map.fit_transform(X, y) # Fit feature_map to data, then transform it. Fits "transformer" to X, returns transformed version of X
         self.reg_model.fit(new_X, y) # Fits ridge regression model onto mapped feature matrix (the transformed version of X)
 
@@ -64,14 +72,35 @@ class RFFModel():
         in RFF + ridge, can analytically compute predicted flux derivatives because model = sum of cosines + sines!
         https://papers.nips.cc/paper_files/paper/2007/file/013a006f03dbc5392effeb8f18fda755-Paper.pdf
 
-        model is q = phi(x)*w + b
-        so grad_x q = grad_x phi(x)*w
-
         RBFSampler approximates an RBF kernel feature map using random Fourier features. The mapping relies on a 
         Monte Carlo approximation to the kernel values. The fit function performs the Monte Carlo sampling, whereas
         the transform method performs the mapping of the data.
+
+        so according to RBFSampler documentation, it uses mapping function z for single input vector x:
+            phi(x) = sqrt(2/n_components) cos(Wx + b)  where W is random_weights_ and b is random_offset_
+
+        ridge model predicts q = phi(x)^T * beta + b_0  where beta = coef_ and b_0 = intercept_
+                Note: coef_ is ndarray of shape (n_features,) or (n_targets, n_features)
+        so grad_x q = beta^T * grad_x phi(x)
+
+        and since phi(x) = sqrt(2/n_components) cos(W^T x + b)
+        grad_x phi(x) = -sqrt(2/n_components) sin(W^T x + b) * W^T
+
+        so grad_x q = beta^T * -sqrt(2/n_components) sin(W^T x + b) * W^T
         """
-        return 0
+    
+        W = self.feature_map.random_weights_ # shape (n_features, n_components)
+        b = self.feature_map.random_offset_ # shape n_components, )
+
+        beta = self.reg_model.coef_
+
+        sin_input = X @ W + b
+        scalar = (-1) * np.sqrt(2/self.n_components)
+        scalar_sine = scalar * np.sin(sin_input)
+        weighted = scalar_sine * beta
+        dq_dX = weighted @ W.T
+        
+        return dq_dX
 
 
 
@@ -102,27 +131,31 @@ def example_simple_1d():
     model.fit(X, q_data)
     q_pred = model.predict(X)
 
-    # mean squared error
-    train_mse_noisy = np.mean((q_pred - q_data)**2)
-    train_mse_true = np.mean((q_pred - q_true(s_data))**2)
+    dq_dX_pred = model.predict_dq_dX(X).ravel()
 
-    print("MSE vs noisy data:", train_mse_noisy)
-    print("MSE vs true function:", train_mse_true)
+    # root mean squared error normalized by local noise scale
+    train_rmse_noisy = np.sqrt(np.mean(((q_pred - q_data) / noise_scale) ** 2))
+    train_rmse_true = np.sqrt(np.mean(((q_pred - q_true(s_data)) / noise_scale) ** 2))
+    train_rmse_true_dq = np.sqrt(np.mean(((dq_dX_pred - dq_ds_true(s_data)) / noise_scale) ** 2))
+
+    print("RMSE vs noisy data:", train_rmse_noisy)
+    print("RMSE vs true function:", train_rmse_true)
+    print("RMSE vs true derivative:", train_rmse_true_dq)
 
 
     s_test = np.linspace(-2.0, 2.0, 400)
     X_test = s_test.reshape(-1, 1)
+    noise_scale_test = 0.035 * (1.0 + 0.25 * np.abs(s_test))
 
     q_test_true = q_true(s_test)
     q_test_pred = model.predict(X_test)
+    dq_test_true = dq_ds_true(s_test)
+    dq_test_pred = model.predict_dq_dX(X_test).ravel()
 
-    # mean squared error    
-    test_mse = np.mean((q_test_pred - q_test_true)**2)
-    print("Test MSE:", test_mse)
-
-    # print(f"vector of input values: {s_data}")
-    # print(f"vector of target values: {q_data}")
-    # print(f"predictions: {q_pred}")
+    test_rmse = np.sqrt(np.mean(((q_test_pred - q_test_true) / noise_scale_test) ** 2))
+    print("Test RMSE:", test_rmse)
+    test_dq_rmse = np.sqrt(np.mean(((dq_test_pred - dq_test_true) / noise_scale_test) ** 2))
+    print("Test RMSE for dq:", test_dq_rmse)
 
 
 def example_2d():
