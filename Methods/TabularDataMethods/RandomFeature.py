@@ -1,5 +1,6 @@
 import numpy as np
-import pyrfm
+# import pyrfm ---- incompatible with most current scikit-learn :(
+from sklearn.kernel_approximation import RBFSampler
 from sklearn.linear_model import Ridge
 
 """
@@ -14,7 +15,7 @@ class RFFModel():
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
 
-    def __init__(self, n_components=100, kernel='rbf', gamma='auto', use_offset=False, random_state=None, alpha=1.0):
+    def __init__(self, n_components=100, gamma=1.0, random_state=None, alpha=1.0, kernel='rbf', use_offset=False):
         """
         n_components: number of Random Fourier features
 
@@ -24,11 +25,9 @@ class RFFModel():
                                             https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html
         """
 
-        self.feature_map = pyrfm.random_feature.RandomFourier(
+        self.feature_map = RBFSampler(
             n_components=n_components, 
-            kernel=kernel, 
             gamma=gamma, 
-            use_offset=use_offset,
             random_state=random_state
         )
         self.reg_model = Ridge(alpha=alpha, fit_intercept=True, copy_X=True, max_iter=None, tol=0.0001, solver="auto")
