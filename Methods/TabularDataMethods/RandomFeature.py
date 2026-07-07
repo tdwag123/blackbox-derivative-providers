@@ -10,7 +10,7 @@ pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/p
 class RFFModel():
     """
     Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression
-    (X) -> random Fourier -> phi(X) -> ridge regression -> q
+    (X) -> random Fourier -> phi(X) -> ridge regression -> q -> predict dq
 
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
@@ -56,6 +56,14 @@ class RFFModel():
         """
         new_X = self.feature_map.transform(X) # apply approximate feature map to input
         return self.reg_model.predict(new_X) # predict using linear model
+    
+
+    def predict_dq_dX(self, X):
+        """
+        in RFF + ridge, can analytically compute predicted flux derivatives because model = sum of cosines!
+        """
+        return 0
+
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -69,6 +77,9 @@ def example_simple_1d():
     # very simple, let's say q = cos(s)
     def q_true(s):
         return np.cos(s)
+    
+    def dq_ds_true(s):
+        return np.sin(s) * (-1)
 
     rng = np.random.default_rng(0)
     n_data = 900
@@ -109,7 +120,7 @@ def example_2d():
     return 0
 
 if __name__ == "__main__":
-    example_1d()
+    example_simple_1d()
 
 
 """
