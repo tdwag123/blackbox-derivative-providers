@@ -8,8 +8,8 @@ pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/p
 
 class RFFModel():
     """
-    Random Fourier Features model for 1D constitutive law q = q(s) using RBF kernel and ridge regression
-    (s) -> random Fourier -> phi(s) -> ridge regression -> q
+    Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression
+    (X) -> random Fourier -> phi(X) -> ridge regression -> q
 
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
@@ -20,7 +20,7 @@ class RFFModel():
 
         feature_map: turns X into phi(X)    Note: RandomFourier is feature map object!
                                             https://neonnnnn.github.io/pyrfm/generated/pyrfm.random_feature.RandomFourier.html#pyrfm.random_feature.RandomFourier
-        model: learns q from phi(X)
+        reg_model: learns q from phi(X)
                                             https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html
         """
 
@@ -31,7 +31,7 @@ class RFFModel():
             use_offset=use_offset,
             random_state=random_state
         )
-        self.model = Ridge(alpha=alpha, fit_intercept=True, copy_X=True, max_iter=None, tol=0.0001, solver="auto")
+        self.reg_model = Ridge(alpha=alpha, fit_intercept=True, copy_X=True, max_iter=None, tol=0.0001, solver="auto")
 
 
     def fit(self, X, y):
@@ -41,29 +41,54 @@ class RFFModel():
 
         X = data matrix; array of shape (n_samples, n_features) holding training samples
             Note: In the 1D case q = q(s), n_features = 1
+                  In the 2D case q = q(s,T), n_features = 2
         y = target vector; 1D array of shape (n_samples, ) holding target values
         """
 
         new_X = self.feature_map.fit_transform(X, y) # Fit feature_map to data, then transform it. Fits "transformer" to X, returns transformed version of X
-        self.model.fit(new_X, y) # Fits ridge regression model onto mapped feature matrix (the transformed version of X)
+        self.reg_model.fit(new_X, y) # Fits ridge regression model onto mapped feature matrix (the transformed version of X)
 
         return self # feature_map is now fitted, model is now trained
     
 
     def predict(self, X):
         """
-        Based on model formed by fit, predicts value for specific point.
+        Based on reg_model formed by fit, predicts value for specific point.
         """
         new_X = self.feature_map.transform(X) # apply approximate feature map to input
-        return self.model.predict(new_X) # predict using linear model
+        return self.reg_model.predict(new_X) # predict using linear model
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-def example():
-    return 0
+def example_1d():
+    """
+    Creates sample s_data -> reshape into (N,1) -> compute q_data -> fit() -> predict()
+    s_data: vector of input values
+    q_data: vector of output values
+    """
+
+    # very simple, let's say q = cos(s)
+    def q_true(s):
+        return np.cos(s)
+
+    rng = np.random.default_rng(0)
+    n_data = 900
+    s_data = rng.uniform(-2.0, 2.0, n_data)
+    noise_scale = 0.035 * (1.0 + 0.25 * np.abs(s_data))
+    q_data = q_true(s_data) + noise_scale * rng.standard_normal(n_data)
+
+    X = s_data.reshape(-1, 1)
+
+    model = RFFModel()
+    model.fit(X, q_data)
+    q_pred = model.predict(X)
+
+    print(f"vector of input values: {s_data}")
+    print(f"vector of target values: {q_data}")
+    print(f"predictions: {q_pred}")
 
 if __name__ == "__main__":
-    example()
+    example_1d()
 
 
 """
