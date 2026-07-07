@@ -15,7 +15,7 @@ class RFFModel():
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
 
-    def __init__(self, n_components=100, gamma=1.0, random_state=None, alpha=1.0, kernel='rbf', use_offset=False):
+    def __init__(self, n_components=2000, gamma=0.1, random_state=None, alpha=1e-6, kernel='rbf', use_offset=False):
         """
         n_components: number of Random Fourier features
 
@@ -134,13 +134,13 @@ def example_simple_1d():
     dq_dX_pred = model.predict_dq_dX(X).ravel()
 
     # root mean squared error normalized by local noise scale
-    train_rmse_noisy = np.sqrt(np.mean(((q_pred - q_data) / noise_scale) ** 2))
-    train_rmse_true = np.sqrt(np.mean(((q_pred - q_true(s_data)) / noise_scale) ** 2))
-    train_rmse_true_dq = np.sqrt(np.mean(((dq_dX_pred - dq_ds_true(s_data)) / noise_scale) ** 2))
+    train_rmse_noisy = np.sqrt(np.mean(((q_pred - q_data)) ** 2))
+    train_rmse_true = np.sqrt(np.mean(((q_pred - q_true(s_data))) ** 2))
+    train_rmse_true_dq = np.sqrt(np.mean(((dq_dX_pred - dq_ds_true(s_data))) ** 2))
 
-    print("RMSE vs noisy data:", train_rmse_noisy)
-    print("RMSE vs true function:", train_rmse_true)
-    print("RMSE vs true derivative:", train_rmse_true_dq)
+    print("Raw RMSE vs noisy data:", train_rmse_noisy)
+    print("Raw RMSE vs true function:", train_rmse_true)
+    print("Raw RMSE vs true derivative:", train_rmse_true_dq)
 
 
     s_test = np.linspace(-2.0, 2.0, 400)
@@ -152,10 +152,10 @@ def example_simple_1d():
     dq_test_true = dq_ds_true(s_test)
     dq_test_pred = model.predict_dq_dX(X_test).ravel()
 
-    test_rmse = np.sqrt(np.mean(((q_test_pred - q_test_true) / noise_scale_test) ** 2))
-    print("Test RMSE:", test_rmse)
-    test_dq_rmse = np.sqrt(np.mean(((dq_test_pred - dq_test_true) / noise_scale_test) ** 2))
-    print("Test RMSE for dq:", test_dq_rmse)
+    test_rmse = np.sqrt(np.mean(((q_test_pred - q_test_true)) ** 2))
+    print("Raw Test RMSE:", test_rmse)
+    test_dq_rmse = np.sqrt(np.mean(((dq_test_pred - dq_test_true)) ** 2))
+    print("Raw Test RMSE for dq:", test_dq_rmse)
 
 
 
@@ -164,10 +164,72 @@ Note: FOR REAL 2D DATA, SHOULD NORMALIZE INPUT COLUMNS TO SIMILAR RANGES BEFORE 
 No normalization of inputs occurs in this code
 """
 def example_2d():
-    return 0
+    def q_true(s, T):
+        base = -((1.0 + 0.20 * T**2) + 0.04 * s**2) * s
+        oscillation = 0.35 * np.sin(2.5 * s) * np.exp(-0.5 * (T - 1.4) ** 2)
+        transition = -0.45 * np.tanh(3.0 * (s - 0.45)) * np.exp(
+            -2.0 * (T - 2.1) ** 2
+        )
+        return base + oscillation + transition
+
+    def dq_ds_true(s, T):
+        base = -(1.0 + 0.20 * T**2) - 0.12 * s**2
+        oscillation = 0.875 * np.cos(2.5 * s) * np.exp(-0.5 * (T - 1.4) ** 2)
+        u = 3.0 * (s - 0.45)
+        sech2 = 1.0 / np.cosh(u) ** 2
+        transition = -1.35 * sech2 * np.exp(-2.0 * (T - 2.1) ** 2)
+        return base + oscillation + transition
+
+    def dq_dT_true(s, T):
+        base = -0.4 * T * s
+        oscillation = (
+            -0.35
+            * (T - 1.4)
+            * np.sin(2.5 * s)
+            * np.exp(-0.5 * (T - 1.4) ** 2)
+        )
+        transition = (
+            1.8
+            * (T - 2.1)
+            * np.tanh(3.0 * (s - 0.45))
+            * np.exp(-2.0 * (T - 2.1) ** 2)
+        )
+        return base + oscillation + transition
+
+    rng = np.random.default_rng(0)
+    n_data = 900
+    s_data = rng.uniform(-2.0, 2.0, n_data)
+    T_data = rng.uniform(0.0, 3.0, n_data)
+    noise_scale = 0.035 * (1.0 + 0.25 * np.abs(s_data))
+    q_data = q_true(s_data, T_data) + noise_scale * rng.standard_normal(n_data)
+
+    X = np.column_stack([s_data, T_data])
+
+    model = RFFModel()
+    model.fit(X, q_data)
+    q_pred = model.predict(X)
+    dq_dX_pred = model.predict_dq_dX(X)
+
+    # dq_dX_pred[:, 0] = predicted dq/ds
+    # dq_dX_pred[:, 1] = predicted dq/dT
+
+    dq_ds_exact = dq_ds_true(s_data, T_data)
+    dq_dT_exact = dq_dT_true(s_data, T_data)
+
+    rmse_q = np.sqrt(np.mean(((q_pred - q_true(s_data, T_data)) ** 2)))
+    rmse_dq_ds = np.sqrt(np.mean(((dq_dX_pred[:, 0] - dq_ds_exact)) ** 2))
+    rmse_dq_dT = np.sqrt(np.mean(((dq_dX_pred[:, 1] - dq_dT_exact)) ** 2))
+
+    print("Raw RMSE for q:", rmse_q)
+    print("Raw RMSE for dq_ds:", rmse_dq_ds)
+    print("Raw RMSE for dq_dT:", rmse_dq_dT)
+
+
+    
 
 if __name__ == "__main__":
     example_simple_1d()
+    example_2d()
 
 
 """
