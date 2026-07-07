@@ -1,54 +1,35 @@
 import numpy as np
 import pyrfm
-from sklearn.kernel_approximation import RBFSampler
-from sklearn.linear_model import SGDClassifier
-from GaussianProcessesWrap import KISSGPFluxST
+from sklearn.linear_model import Ridge
+from sklearn.linear_model import SGDClassifier  # used for classification (discrete values) so we will not be using this
 
 """
 pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/pyrfm/.
 """
 
 class RFFModel():
-    def __init__(
-            self, 
-            n_components=100, 
-            kernel='rbf', 
-            gamma='auto', 
-            use_offset=False, 
-            random_state=None,
-            n_data=900,
-            s_data,
-            T_data):
+    """
+    Random Fourier Features model for constitutive law q = q(s,T) using RBF kernel and ridge regression
+    (s,T) -> random Fourier -> phi(s,T) -> ridge regression -> q
+    """
+    def __init__(self, n_components=100, kernel='rbf', gamma='auto', use_offset=False, random_state=None):
         # RandomFourier is feature map object!
-        self.feature_map = pyrfm.random_feature.RandomFourier(n_components, kernel, gamma, use_offset, random_state)
+        self.feature_map = pyrfm.random_feature.RandomFourier(
+            n_components=n_components, 
+            kernel=kernel, 
+            gamma=gamma, 
+            use_offset=use_offset, 
+            random_state=random_state
+        )
 
-        rng = np.random.default_rng(0)
-        n_data = 900
-        s_data = rng.uniform(-2.0, 2.0, n_data)
-        T_data = rng.uniform(0.0, 3.0, n_data)
+        self.model = Ridge(alpha=1, fit_intercept=True, copy_X=True, max_iter=None, tol=0.0001, solver="auto")
 
-        self.model = KISSGPFluxST(
-            s_data,
-        T_data,
-        q_data,
-        grid_size=40,
-        training_iter=70,
-        learning_rate=0.08,
-    )
-
-
-
-def random_fourier_features_1d(x, M):
-    """
-    idea of RFF: construct explicit feature map which is of dimension much lower than number of
-    observations, but with resulting inner product which approximates desired kernel function k(x,y)
-
-    x = array of shape (n_samples, n_features) holding training samples
-    y = array of shape (n_samples, ) holding target values
-    """
-
-    
-    return 0
+    def fit():
+        """
+        x = array of shape (n_samples, n_features) holding training samples
+        y = array of shape (n_samples, ) holding target values
+        """
+        return 0
 
 
 def example():
@@ -87,4 +68,7 @@ https://pages.cs.wisc.edu/~yudongchen/cs839_sp22/5_random_features.pdf
 https://people.eecs.berkeley.edu/~brecht/papers/07.rah.rec.nips.pdf
 https://gregorygundersen.com/blog/2019/12/23/random-fourier-features/
 https://scikit-learn.org/stable/modules/generated/sklearn.kernel_approximation.RBFSampler.html
+
+idea of RFF: construct explicit feature map which is of dimension much lower than number of
+observations, but with resulting inner product which approximates desired kernel function k(x,y)
 """
