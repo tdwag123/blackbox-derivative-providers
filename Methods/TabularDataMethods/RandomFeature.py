@@ -10,7 +10,7 @@ pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/p
 class RFFModel():
     """
     Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression
-    (X) -> random Fourier -> phi(X) -> ridge regression -> q -> predict dq
+    (X) -> random Fourier -> phi(X) -> ridge regression -> q -> predict dq_dX
 
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
@@ -19,8 +19,8 @@ class RFFModel():
         """
         n_components: number of Random Fourier features
 
-        feature_map: turns X into phi(X)    Note: RandomFourier is feature map object!
-                                            https://neonnnnn.github.io/pyrfm/generated/pyrfm.random_feature.RandomFourier.html#pyrfm.random_feature.RandomFourier
+        feature_map: turns X into phi(X)    
+                                            https://scikit-learn.org/stable/modules/kernel_approximation.html#rbf-kernel-approx
         reg_model: learns q from phi(X)
                                             https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html
         """
@@ -60,7 +60,16 @@ class RFFModel():
 
     def predict_dq_dX(self, X):
         """
-        in RFF + ridge, can analytically compute predicted flux derivatives because model = sum of cosines!
+        
+        in RFF + ridge, can analytically compute predicted flux derivatives because model = sum of cosines + sines!
+        https://papers.nips.cc/paper_files/paper/2007/file/013a006f03dbc5392effeb8f18fda755-Paper.pdf
+
+        model is q = phi(x)*w + b
+        so grad_x q = grad_x phi(x)*w
+
+        RBFSampler approximates an RBF kernel feature map using random Fourier features. The mapping relies on a 
+        Monte Carlo approximation to the kernel values. The fit function performs the Monte Carlo sampling, whereas
+        the transform method performs the mapping of the data.
         """
         return 0
 
