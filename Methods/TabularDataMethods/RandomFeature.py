@@ -66,7 +66,7 @@ class RFFModel():
         return self.reg_model.predict(new_X) # predict using linear model
     
 
-    # idea: fit isotonic constraints?
+    # idea: fit isotonic constraints for monotonicity??
 
     def predict_dq_dX(self, X):
         """
