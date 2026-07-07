@@ -66,6 +66,8 @@ class RFFModel():
         return self.reg_model.predict(new_X) # predict using linear model
     
 
+    # idea: fit isotonic constraints?
+
     def predict_dq_dX(self, X):
         """
         
@@ -138,9 +140,9 @@ def example_simple_1d():
     train_rmse_true = np.sqrt(np.mean(((q_pred - q_true(s_data))) ** 2))
     train_rmse_true_dq = np.sqrt(np.mean(((dq_dX_pred - dq_ds_true(s_data))) ** 2))
 
-    print("Raw RMSE vs noisy data:", train_rmse_noisy)
-    print("Raw RMSE vs true function:", train_rmse_true)
-    print("Raw RMSE vs true derivative:", train_rmse_true_dq)
+    print("1D Raw RMSE vs noisy data:", train_rmse_noisy)
+    print("1D Raw RMSE vs true function:", train_rmse_true)
+    print("1D Raw RMSE vs true derivative:", train_rmse_true_dq)
 
 
     s_test = np.linspace(-2.0, 2.0, 400)
@@ -153,9 +155,9 @@ def example_simple_1d():
     dq_test_pred = model.predict_dq_dX(X_test).ravel()
 
     test_rmse = np.sqrt(np.mean(((q_test_pred - q_test_true)) ** 2))
-    print("Raw Test RMSE:", test_rmse)
+    print("1D Raw Test RMSE:", test_rmse)
     test_dq_rmse = np.sqrt(np.mean(((dq_test_pred - dq_test_true)) ** 2))
-    print("Raw Test RMSE for dq:", test_dq_rmse)
+    print("1D Raw Test RMSE for dq:", test_dq_rmse)
 
 
 
@@ -220,9 +222,9 @@ def example_2d():
     rmse_dq_ds = np.sqrt(np.mean(((dq_dX_pred[:, 0] - dq_ds_exact)) ** 2))
     rmse_dq_dT = np.sqrt(np.mean(((dq_dX_pred[:, 1] - dq_dT_exact)) ** 2))
 
-    print("Raw RMSE for q:", rmse_q)
-    print("Raw RMSE for dq_ds:", rmse_dq_ds)
-    print("Raw RMSE for dq_dT:", rmse_dq_dT)
+    print("2D Raw RMSE for q:", rmse_q)
+    print("2D Raw RMSE for dq_ds:", rmse_dq_ds)
+    print("2D Raw RMSE for dq_dT:", rmse_dq_dT)
 
 
     
