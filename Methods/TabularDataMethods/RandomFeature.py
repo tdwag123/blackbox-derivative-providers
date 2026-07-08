@@ -15,7 +15,7 @@ class RFFModel():
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
 
-    def __init__(self, n_components=2000, gamma=0.1, random_state=None, alpha=1e-6):
+    def __init__(self, n_components=400, gamma=0.1, random_state=None, alpha=1e-6):
         """
         n_components: number of Random Fourier features
 
@@ -122,7 +122,7 @@ def example_simple_1d():
         return np.sin(s) * (-1)
 
     rng = np.random.default_rng(0)
-    n_data = 900
+    n_data = 2000
     s_data = rng.uniform(-2.0, 2.0, n_data)
     noise_scale = 0.035 * (1.0 + 0.25 * np.abs(s_data))
     q_data = q_true(s_data) + noise_scale * rng.standard_normal(n_data)
@@ -199,7 +199,7 @@ def example_2d():
         return base + oscillation + transition
 
     rng = np.random.default_rng(0)
-    n_data = 900
+    n_data = 2000
     s_data = rng.uniform(-2.0, 2.0, n_data)
     T_data = rng.uniform(0.0, 3.0, n_data)
     noise_scale = 0.035 * (1.0 + 0.25 * np.abs(s_data))
