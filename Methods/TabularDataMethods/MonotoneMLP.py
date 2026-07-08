@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 
 # MLP code adapted from https://docs.jax.dev/en/latest/notebooks/neural_network_with_tfds_data.html
+# loss function from https://arxiv.org/pdf/1909.10662
 # could do this MUCH more easily probably.. (use NN library maybe flax that works with JAX)
 # installing jax: conda install 'jax' and 'jaxlib'
 
@@ -33,13 +34,22 @@ def _predict_one(params, x):
 
 _predict_batch = vmap(_predict_one, in_axes=(None, 0))
 
-def _mse_loss(params, x, y):
+def _mono_loss(params, x, y, monotonicity_weight):
     predictions = _predict_batch(params, x)
-    return jnp.mean((predictions - y) ** 2)
+    nn_loss = jnp.mean((predictions - y) ** 2)
+
+    def f_single(xi):
+        return _predict_one(params, xi)[0]
+    grads = vmap(grad(f_single))(x)
+
+    mono_grads = grads[:,1] # technically should be 0, is 1 for testing
+    mono_penalty = jnp.mean(jnp.maximum(0.0, mono_grads)) # may want to swithc out max for smth smooth
+
+    return nn_loss + monotonicity_weight * mono_penalty
 
 @jit
-def _update(params, x, y, learning_rate):
-    gradients = grad(_mse_loss)(params, x, y)
+def _update(params, x, y, learning_rate, monotonicity_weight):
+    gradients = grad(_mono_loss)(params, x, y, monotonicity_weight)
     return [
         (
             weights - learning_rate * d_weights,
@@ -48,15 +58,17 @@ def _update(params, x, y, learning_rate):
         for (weights, biases), (d_weights, d_biases) in zip(params, gradients)
     ]
 
-class BasicMLP:
+class MonotoneMLP:
+    '''MLP implementation with soft monotonicity constraint.'''
 
     def __init__(
         self,
-        hidden_layer_sizes = (32, 16),
+        hidden_layer_sizes = (32, 16, 16),
         learning_rate = 1e-3,
         num_epochs = 100,
         batch_size = 32,
         seed = 0,
+        monotonicity_weight=1.0,
         shuffle = True,
         scale_inputs=False,
         verbose = False
@@ -66,6 +78,7 @@ class BasicMLP:
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.seed = seed
+        self.monotonicity_weight = monotonicity_weight
         self.shuffle = shuffle
         self.scale_inputs = scale_inputs
         self.verbose = verbose
@@ -111,9 +124,12 @@ class BasicMLP:
 
             for start in range(0, sample_count, self.batch_size):
                 batch_indices = indices[start : start + self.batch_size]
-                self.params_ = _update(self.params_, x_train[batch_indices], y_train[batch_indices], self.learning_rate)
+                self.params_ = _update(
+                    self.params_, x_train[batch_indices], y_train[batch_indices], 
+                    self.learning_rate, self.monotonicity_weight
+                )
 
-            train_loss = float(_mse_loss(self.params_, x_train, y_train))
+            train_loss = float(_mono_loss(self.params_, x_train, y_train, self.monotonicity_weight))
             record = {"epoch": float(epoch), "train_loss": train_loss}
 
             self.history_.append(record)
@@ -223,26 +239,24 @@ def test1():
     features = np.loadtxt(datapath, delimiter=',', skiprows=1, usecols=(0,1,2))   # s, T, x
     targets = np.loadtxt(datapath, delimiter=',', skiprows=1, usecols=(7,8,9,10)) # q_clean, q_noisy, dq/ds_true, dq/dT_true
     features_train, features_test, targets_train, targets_test = train_test_split(features, targets, test_size=0.33, random_state=0)
-    X_train = features_train[:,0:2] # s, T (could also train with x by setting 0:3)
+    X_train = features_train[:,0:2] # s, T (could also train with x)
     y_train = targets_train[:,1] # using noisy q here
     X_test = features_test[:,0:2]
     y_test = targets_test[:,1]
 
-    model = BasicMLP(scale_inputs=True, num_epochs = 200)
+    model = MonotoneMLP(scale_inputs=True, num_epochs=200, verbose=False, monotonicity_weight=3.0)
     model.fit(X_train, y_train)
     q_pred, a_pred, b_pred = model.evaluate(X_test[:,0], X_test[:,1])
-    
-    print("\nR2 scores on test set:")
-    print(f"q: {model.score(y_test, q_pred)}")
-    print(f"dq/ds: {model.score(targets_test[:,2], a_pred)}")
-    print(f"dq/dT: {model.score(targets_test[:,3], b_pred)}")
 
     print("\nRMSE on test set:") 
     print(f"q: {rmse(y_test, q_pred)}")
     print(f"dq/ds: {rmse(targets_test[:,2], a_pred)}")
     print(f"dq/dT: {rmse(targets_test[:,3], b_pred)}")
 
-    #TODO: should report scaled RMSE
+    print("\nBut is it monotone?")
+    print(f"Number of positive values for dq/dT: {np.sum(b_pred > 0)}")
+    
+    # TODO: should report scaled RMSE / account for noise
 
 if __name__ == "__main__":
     test1()
