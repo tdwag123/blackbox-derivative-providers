@@ -15,7 +15,7 @@ class RFFModel():
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
 
-    def __init__(self, n_components=2000, gamma=0.1, random_state=None, alpha=1e-6, kernel='rbf', use_offset=False):
+    def __init__(self, n_components=2000, gamma=0.1, random_state=None, alpha=1e-6):
         """
         n_components: number of Random Fourier features
 
@@ -66,7 +66,7 @@ class RFFModel():
         return self.reg_model.predict(new_X) # predict using linear model
     
 
-    # idea: fit isotonic constraints for monotonicity??
+    # idea: fit isotonic constraints for monotonicity????????
 
     def predict_dq_dX(self, X):
         """
