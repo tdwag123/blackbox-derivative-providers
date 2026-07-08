@@ -10,12 +10,13 @@ pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/p
 class RFFModel():
     """
     Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression
-    (X) -> random Fourier -> phi(X) -> ridge regression -> q -> predict dq_dX
+    (X) -> random Fourier -> phi(X) -> ridge regression -> predict q -> analytically solve for predicted dq_dX
 
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
 
-    def __init__(self, n_components=2000, gamma=0.1, random_state=None, alpha=1e-6, kernel='rbf', use_offset=False):
+    # !!! n_components should be meaningfully smaller than n_data
+    def __init__(self, n_components=400, gamma=0.1, random_state=None, alpha=1e-6):
         """
         n_components: number of Random Fourier features
 
@@ -66,7 +67,7 @@ class RFFModel():
         return self.reg_model.predict(new_X) # predict using linear model
     
 
-    # idea: fit isotonic constraints for monotonicity??
+    # idea: fit isotonic constraints for monotonicity????????
 
     def predict_dq_dX(self, X):
         """
@@ -122,7 +123,7 @@ def example_simple_1d():
         return np.sin(s) * (-1)
 
     rng = np.random.default_rng(0)
-    n_data = 900
+    n_data = 5000
     s_data = rng.uniform(-2.0, 2.0, n_data)
     noise_scale = 0.035 * (1.0 + 0.25 * np.abs(s_data))
     q_data = q_true(s_data) + noise_scale * rng.standard_normal(n_data)
@@ -145,7 +146,7 @@ def example_simple_1d():
     print("1D Raw RMSE vs true derivative:", train_rmse_true_dq)
 
 
-    s_test = np.linspace(-2.0, 2.0, 400)
+    s_test = np.linspace(-2.0, 2.0, 5000)
     X_test = s_test.reshape(-1, 1)
     noise_scale_test = 0.035 * (1.0 + 0.25 * np.abs(s_test))
 
@@ -162,7 +163,7 @@ def example_simple_1d():
 
 
 """
-Note: FOR REAL 2D DATA, SHOULD NORMALIZE INPUT COLUMNS TO SIMILAR RANGES BEFORE PROCEEDING
+Note: FOR REAL 2D TABULAR DATA, SHOULD NORMALIZE INPUT COLUMNS TO SIMILAR RANGES BEFORE PROCEEDING
 No normalization of inputs occurs in this code
 """
 def example_2d():
@@ -199,7 +200,7 @@ def example_2d():
         return base + oscillation + transition
 
     rng = np.random.default_rng(0)
-    n_data = 900
+    n_data = 5000
     s_data = rng.uniform(-2.0, 2.0, n_data)
     T_data = rng.uniform(0.0, 3.0, n_data)
     noise_scale = 0.035 * (1.0 + 0.25 * np.abs(s_data))
