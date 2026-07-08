@@ -14,10 +14,10 @@ TABULAR_DIR = ROOT / "TabularDataMethods"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(TABULAR_DIR))
 
-from CubicSplines import CubicSplineFluxST
-from MonotoneInterpolation import PchipFluxST
-from RadialBasisFunctions import RBFDerivativeProviderST
-from GaussianProcessesWrap import KISSGPFluxST
+from Methods.TabularDataMethods.CubicSplines import CubicSplineFluxST
+from Methods.TabularDataMethods.MonotoneInterpolation import PchipFluxST
+from Methods.TabularDataMethods.RadialBasisFunctions import RBFDerivativeProviderST
+from Methods.TabularDataMethods.GaussianProcessesWrap import KISSGPFluxST
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
