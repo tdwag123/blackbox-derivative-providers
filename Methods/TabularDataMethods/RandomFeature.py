@@ -10,7 +10,7 @@ pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/p
 class RFFModel():
     """
     Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression
-    (X) -> random Fourier -> phi(X) -> ridge regression -> q -> predict dq_dX
+    (X) -> random Fourier -> phi(X) -> ridge regression -> predict q -> analytically solve for predicted dq_dX
 
     RFF is approximation of RBF kernel for large datasets to stop computer from running out of memory
     """
@@ -162,7 +162,7 @@ def example_simple_1d():
 
 
 """
-Note: FOR REAL 2D DATA, SHOULD NORMALIZE INPUT COLUMNS TO SIMILAR RANGES BEFORE PROCEEDING
+Note: FOR REAL 2D TABULAR DATA, SHOULD NORMALIZE INPUT COLUMNS TO SIMILAR RANGES BEFORE PROCEEDING
 No normalization of inputs occurs in this code
 """
 def example_2d():
