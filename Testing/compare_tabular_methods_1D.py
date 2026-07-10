@@ -9,15 +9,16 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TABULAR_DIR = ROOT / "TabularDataMethods"
+TABULAR_DIR = ROOT / "Methods" / "TabularDataMethods"
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(TABULAR_DIR))
 
 from Methods.TabularDataMethods.CubicSplines import CubicSplineFluxST
-from Methods.TabularDataMethods.MonotoneInterpolation import PchipFluxST
+# from Methods.TabularDataMethods.MonotoneInterpolation import PchipFluxST
 from Methods.TabularDataMethods.RadialBasisFunctions import RBFDerivativeProviderST
 from Methods.TabularDataMethods.GaussianProcessesWrap import KISSGPFluxST
+from Methods.TabularDataMethods.RandomFeature.RFF import RFFDerivativeProviderST
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -530,6 +531,8 @@ def build_methods(df, training_df=None, use_gp=True):
     providers = {}
     build_times = {}
 
+    
+
     def build_provider(name, factory):
         start = time.perf_counter()
         providers[name] = factory()
@@ -561,30 +564,49 @@ def build_methods(df, training_df=None, use_gp=True):
             T_std,
         ),
     )
-    build_provider(
-        "PCHIP",
-        lambda: ScaledProvider(
-            PchipFluxST(s_hat_grid, T_hat_grid, q_grid_pchip, extrapolate=False, clip=True),
-            s_mean,
-            s_std,
-            T_mean,
-            T_std,
-        ),
-    )
-    build_provider(
-        "Smooth+PCHIP",
-        lambda: ScaledProvider(
-            PchipFluxST(s_hat_grid, T_hat_grid, q_grid_smooth_pchip, extrapolate=False, clip=True),
-            s_mean,
-            s_std,
-            T_mean,
-            T_std,
-        ),
-    )
+    # build_provider(
+        # "PCHIP",
+        # lambda: ScaledProvider(
+        #    PchipFluxST(s_hat_grid, T_hat_grid, q_grid_pchip, extrapolate=False, clip=True),
+        #    s_mean,
+        #    s_std,
+        #    T_mean,
+        #    T_std,
+        #),
+    #)
+    # build_provider(
+        # "Smooth+PCHIP",
+        # lambda: ScaledProvider(
+            # PchipFluxST(s_hat_grid, T_hat_grid, q_grid_smooth_pchip, extrapolate=False, clip=True),
+            # s_mean,
+            # s_std,
+            # T_mean,
+            # T_std,
+        # ),
+    # )
 
     s_hat_data = (training_df["s"].to_numpy() - s_mean) / s_std
     T_hat_data = (training_df["T"].to_numpy() - T_mean) / T_std
     q_noisy_data = training_df["q_noisy"].to_numpy()
+
+    build_provider(
+        "RFF",
+        lambda: ScaledProvider(
+            RFFDerivativeProviderST(
+                s_hat_data,
+                T_hat_data,
+                q_noisy_data,
+                n_components=2000,
+                gamma=1.0,
+                alpha=1e-6,
+                random_state=0,
+            ),
+            s_mean,
+            s_std,
+            T_mean,
+            T_std,
+        ),
+    )
 
     build_provider(
         "RBF",
@@ -804,7 +826,7 @@ def fem_comparison(flux_laws, build_times):
 
 
 def plot_solutions(x_mesh, solutions, dataset_name):
-    image_dir = ROOT / "Images"
+    image_dir = ROOT / "Data" / "Images"
     image_dir.mkdir(exist_ok=True)
 
     plt.figure(figsize=(10, 5))
@@ -899,7 +921,7 @@ def run_dataset(dataset_path):
 
 
 def write_markdown_report(results):
-    report_path = ROOT / "TabularDataMethods" / "tabular_methods_1D_results.md"
+    report_path = ROOT / "Testing" / "tabular_methods_1D_results.md"
 
     lines = [
         "# 1D tabular method comparison",
@@ -1017,7 +1039,7 @@ def write_markdown_report(results):
 
 
 def main():
-    dataset_dir = ROOT / "NoisyDeterministicOracles" / "datasets"
+    dataset_dir = ROOT / "Data" / "NoisyDeterministicOracles" / "datasets"
     dataset_paths = [
         dataset_dir / "nonlinear_high_noise.csv",
         dataset_dir / "nonlinear_low_noise.csv",

@@ -7,6 +7,28 @@ from sklearn.linear_model import Ridge
 pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/pyrfm/.
 """
 
+class RFFDerivativeProviderST:
+    def __init__(self, s_data, T_data, q_data, **kwargs):
+        X = np.column_stack([s_data, T_data])
+        self.model = RFFModel(**kwargs)
+        self.model.fit(X, q_data)
+
+    def evaluate(self, s_q, T_q):
+        s_q = np.asarray(s_q, dtype=float)
+        T_q = np.asarray(T_q, dtype=float)
+
+        Xq = np.column_stack([s_q.ravel(), T_q.ravel()])
+
+        q = self.model.predict(Xq)
+        dq = self.model.predict_dq_dX(Xq)
+
+        q = q.reshape(s_q.shape)
+        dq_ds = dq[:, 0].reshape(s_q.shape)  # dq/ds
+        dq_dT = dq[:, 1].reshape(s_q.shape)  # dq/dT
+
+        return q, dq_ds, dq_dT
+    
+
 class RFFModel():
     """
     Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression

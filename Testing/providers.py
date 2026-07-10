@@ -23,6 +23,7 @@ from Methods.TabularDataMethods.GaussianProcessesWrap import KISSGPFluxST
 from Methods.TabularDataMethods.MonotoneInterpolation import PchipFluxST
 from Methods.TabularDataMethods.RadialBasisFunctions import RBFDerivativeProviderST
 from Methods.TabularDataMethods.MLP import MLP
+from Methods.TabularDataMethods.RandomFeature.RFF import RFFDerivativeProviderST
 
 def require_evaluate(provider):
     if not hasattr(provider, "evaluate") or not callable(provider.evaluate):
@@ -158,7 +159,24 @@ def build_provider(method, df, training_df):
 
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
+
+    elif method_key == "rff":
+        provider = RFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            n_components=2000,
+            gamma=1.0,
+            alpha=1e-6,
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+        
+
     # ADD MORE METHODS/MODELS HERE
+
 
     else:
         raise ValueError(f"unknown method: {method}")

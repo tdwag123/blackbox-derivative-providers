@@ -300,6 +300,11 @@ if __name__ == "__main__":
 
     methods = [
         'Analytic',
+        'rff',
+        'cubicspline',
+        'rbf',
+        'savgol',
+        'kissgp'
     ]
 
     dataset_dir = ROOT / "Data" / "NoisyDeterministicOracles" / "datasets"
