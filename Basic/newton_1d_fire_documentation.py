@@ -75,8 +75,11 @@ def gl2_quadrature_integration(f, a, b, dim: int):
 
     quad_pts, weights = get_gl2_values(dim)
 
-    a = np.asarray(a, dtype=float)
-    b = np.asarray(b, dtype=float)
+    # Scalars are the natural calling convention for a 1D interval.  Promote
+    # them to length-one arrays internally so the tensor-product code below can
+    # use the same representation in every dimension.
+    a = np.atleast_1d(np.asarray(a, dtype=float))
+    b = np.atleast_1d(np.asarray(b, dtype=float))
 
     if a.shape != (dim,):
         raise ValueError("a should have length dim")
@@ -93,7 +96,10 @@ def gl2_quadrature_integration(f, a, b, dim: int):
     integral = None
     for node, weight in zip(quad_pts, weights):
         physical_pt = midpoint + jacobian * node
-        f_val = np.asarray(f(physical_pt), dtype=float)
+        # Existing 1D FE callbacks operate on scalar x coordinates; callbacks
+        # for higher-dimensional integration receive a coordinate vector.
+        f_arg = float(physical_pt[0]) if dim == 1 else physical_pt
+        f_val = np.asarray(f(f_arg), dtype=float)
 
         if integral is None:
             integral = weight * f_val
