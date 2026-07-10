@@ -1045,19 +1045,6 @@ def main():
     print("----------------------")
     print("For the sign convention q = -k*s, the positive tangent is -dq/ds.")
     print(f"fraction predicted positive tangent < 0: {np.mean(positive_tangent_pred < 0):.3%}")
-    
-    # optional - plot a figure to show predicted pos tangent vs. true pos tangent
-    plt.figure(figsize=(6, 5))
-    plt.scatter(positive_tangent_true, positive_tangent_pred, s=20, alpha=0.7)
-    lo = min(np.min(positive_tangent_true), np.min(positive_tangent_pred))
-    hi = max(np.max(positive_tangent_true), np.max(positive_tangent_pred))
-    plt.plot([lo, hi], [lo, hi], linestyle="dotted")
-    plt.axhline(0.0, linestyle="--")
-    plt.xlabel("true positive tangent  -dq/ds")
-    plt.ylabel("predicted positive tangent  -dq/ds")
-    plt.title("EP monotonicity performance diagnostic")
-    plt.tight_layout()
-    plt.show()
         
 if __name__ == "__main__":
     main()
