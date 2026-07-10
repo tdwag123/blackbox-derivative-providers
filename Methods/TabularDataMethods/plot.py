@@ -13,6 +13,8 @@ def plot_model(monotone_gp, x_scaler, y_mean: float, y_scale: float,
     
     """
     Plots reconstructed flux law. Call after fitting and predictions.
+    RMK: this is directly from the monotone GP (Matern), but can 
+    be adapted to make plots for other methods.
     
     """
     
