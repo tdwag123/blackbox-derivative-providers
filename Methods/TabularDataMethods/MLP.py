@@ -247,7 +247,7 @@ def test1():
     y_test = targets_test[:,1]
 
     model = MLP(
-        scale_inputs=True, 
+        scale_inputs=False, 
         num_epochs = 200, 
         l2_weight=0.0,           # set nonzero for regularization
         monotonicity_weight=0.0, # set nonzero for (closer to) monotone output
