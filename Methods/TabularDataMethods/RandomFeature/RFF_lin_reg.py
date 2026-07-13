@@ -3,7 +3,7 @@ from sklearn.kernel_approximation import RBFSampler
 from sklearn.linear_model import LinearRegression
 
 """
-Removing Ridge and solving manually. 
+RFF without regularization.
 """
 
 class LinRegRFFDerivativeProviderST:
