@@ -3,14 +3,17 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
-from jax import grad, jit, vmap, random
+from jax import grad, jit, vmap, random, nn, config
 import numpy as np
 from sklearn.model_selection import train_test_split
+from functools import partial
 
 # MLP code adapted from https://docs.jax.dev/en/latest/notebooks/neural_network_with_tfds_data.html
 # monotonicity component in loss function from https://arxiv.org/pdf/1909.10662
 # could do this MUCH more easily probably.. (use NN library maybe flax that works with JAX)
 # installing jax: conda install 'jax' and 'jaxlib'
+
+config.update("jax_enable_x64", True)
 
 def _random_layer_params(in_features, out_features, key):
     weight_key, _ = random.split(key)
@@ -28,35 +31,35 @@ def _init_network_params(layer_sizes, key):
         )
     ]
 
-def _predict_one(params, x):
+def _predict_one(params, x, activation_func):
     activations = x
     for weights, biases in params[:-1]:
-        activations = jnp.tanh(jnp.dot(weights, activations) + biases)
+        activations = activation_func(jnp.dot(weights, activations) + biases)
 
     final_weights, final_biases = params[-1]
     return jnp.dot(final_weights, activations) + final_biases
 
-_predict_batch = vmap(_predict_one, in_axes=(None, 0))
+_predict_batch = vmap(_predict_one, in_axes=(None, 0, None))
 
 def _l2_penalty(params):
     return sum(jnp.sum(weights ** 2) for weights, biases in params)
 
-def _mse_loss(params, x, y, l2_weight, monotonicity_weight):
-    predictions = _predict_batch(params, x)
+def _mse_loss(params, x, y, l2_weight, monotonicity_weight, activation_func):
+    predictions = _predict_batch(params, x, activation_func)
     data_loss = jnp.mean((predictions - y) ** 2)
     l2_loss = _l2_penalty(params)
 
     def f_single(xi):
-        return _predict_one(params, xi)[0]
+        return _predict_one(params, xi, activation_func)[0]
     grads = vmap(grad(f_single))(x)
     mono_grads = grads[:,0]
     mono_penalty = jnp.mean(jnp.maximum(0.0, mono_grads)) # may want to swithc out max for smth smooth
 
     return data_loss + l2_weight * l2_loss + monotonicity_weight * mono_penalty
 
-@jit
-def _update(params, x, y, learning_rate, l2_weight, monotonicity_weight):
-    gradients = grad(_mse_loss)(params, x, y, l2_weight, monotonicity_weight)
+@partial(jit, static_argnums=(6,))
+def _update(params, x, y, learning_rate, l2_weight, monotonicity_weight, activation_func):
+    gradients = grad(_mse_loss)(params, x, y, l2_weight, monotonicity_weight, activation_func)
     return [
         (
             weights - learning_rate * d_weights,
@@ -75,6 +78,7 @@ class MLP:
         num_epochs = 100,
         batch_size = 32,
         l2_weight = 0.0,
+        activation_func = "tanh",
         monotonicity_weight = 0.0,
         seed = 0,
         shuffle = True,
@@ -86,6 +90,18 @@ class MLP:
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.l2_weight = l2_weight
+
+        if activation_func == "tanh":
+            self.activation_func = jnp.tanh
+        elif activation_func == "softplus":
+            self.activation_func = nn.softplus
+        elif activation_func == "relu":
+            self.activation_func = nn.relu
+        elif activation_func == "none":
+            self.activation_func = lambda x: x
+        else:
+            raise ValueError(f"Unknown activation_func: {activation_func}")
+
         self.monotonicity_weight = monotonicity_weight
         self.seed = seed
         self.shuffle = shuffle
@@ -133,9 +149,9 @@ class MLP:
 
             for start in range(0, sample_count, self.batch_size):
                 batch_indices = indices[start : start + self.batch_size]
-                self.params_ = _update(self.params_, x_train[batch_indices], y_train[batch_indices], self.learning_rate, self.l2_weight, self.monotonicity_weight)
+                self.params_ = _update(self.params_, x_train[batch_indices], y_train[batch_indices], self.learning_rate, self.l2_weight, self.monotonicity_weight, self.activation_func)
 
-            train_loss = float(_mse_loss(self.params_, x_train, y_train, self.l2_weight, self.monotonicity_weight))
+            train_loss = float(_mse_loss(self.params_, x_train, y_train, self.l2_weight, self.monotonicity_weight, self.activation_func))
             record = {"epoch": float(epoch), "train_loss": train_loss}
 
             self.history_.append(record)
@@ -159,7 +175,7 @@ class MLP:
                 f"x has {x_data.shape[1]} features, expected {self.input_dim_}."
             )
 
-        predictions = np.asarray(_predict_batch(self.params_, x_data))
+        predictions = np.asarray(_predict_batch(self.params_, x_data, self.activation_func))
         if self.output_dim_ == 1:
             return predictions.ravel()
         return predictions
@@ -179,7 +195,7 @@ class MLP:
 
     def f(self, x):
         '''Wrapper for JAX grad'''
-        return _predict_one(self.params_, x)[0]
+        return _predict_one(self.params_, x, self.activation_func)[0]
 
     def _scale_x(self, x):
         if self.x_mean_ is None or self.x_std_ is None:
@@ -255,7 +271,7 @@ def test1():
         num_epochs = 200, 
         l2_weight=0.0,           # set nonzero for regularization
         monotonicity_weight=0.0, # set nonzero for (closer to) monotone output
-        hidden_layer_sizes=(128,128,64,64,64,64), 
+        hidden_layer_sizes=(16, 8), 
         verbose=False)
     model.fit(X_train, y_train)
     q_pred, a_pred, b_pred = model.evaluate(X_test[:,0], X_test[:,1])
@@ -269,8 +285,6 @@ def test1():
     print(f"q: {rmse(y_test, q_pred)}")
     print(f"dq/ds: {rmse(targets_test[:,2], a_pred)}")
     print(f"dq/dT: {rmse(targets_test[:,3], b_pred)}")
-
-    #TODO: should also report scaled RMSE
 
     print("\nBut is it monotone?")
     print(f"Number of positive values for dq/ds: {np.sum(a_pred > 0)}")

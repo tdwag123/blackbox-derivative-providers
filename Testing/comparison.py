@@ -45,6 +45,8 @@ def rmse(predicted, reference):
     return float(np.sqrt(np.mean((predicted - reference) ** 2)))
 
 def noise_normalized_rmse(predicted, reference, noise_std):
+    if np.any(noise_std <= 0.0):
+        return np.nan
     return rmse(predicted / noise_std, reference / noise_std)
 
 def finite_difference_dq_ds(flux_law, s_values, T_values, h, s_min, s_max):
@@ -108,18 +110,27 @@ def accuracy_correctness(model, df, training_df):
     q_pred_clean, a_pred_clean, b_pred_clean = evaluate_flux_law_on_points(flux_law, s_clean, T_clean)
     q_pred_noisy, _, _ = evaluate_flux_law_on_points(flux_law, s_noisy, T_noisy,)
 
-    noisy_q_noise_units = noise_normalized_rmse(q_pred_noisy, q_obs_noisy, noise_std_noisy,)
-
     if not np.all(np.isfinite(a_pred_clean)):
         a_pred_clean = finite_difference_dq_ds(flux_law, s_clean, T_clean, h_s, float(df["s"].min()),float(df["s"].max()),)
+
+    noisy_q_rmse = rmse(q_pred_noisy, q_obs_noisy)
+    clean_q_rmse = rmse(q_pred_clean, q_clean)
+    clean_dq_ds_rmse = rmse(a_pred_clean, a_clean)
+    clean_dq_dT_rmse = rmse(b_pred_clean, b_clean)
+
+    noisy_q_noise_units = noise_normalized_rmse(q_pred_noisy, q_obs_noisy, noise_std_noisy,)
 
     entropy_values = np.maximum(0.0, q_pred_clean * s_clean)
     deriv_values = np.maximum(0.0, a_pred_clean)
 
     return {
+        "test_obs_q_RMSE": noisy_q_rmse,
+        "clean_q_RMSE": clean_q_rmse,
+        "clean_dq_ds_RMSE": clean_dq_ds_rmse,
+        "clean_dq_dT_RMSE": clean_dq_dT_rmse,
         "test_obs_q_RMSE/noise": noisy_q_noise_units,
-        "clean_dq_ds_RMSE/noise": rmse(a_pred_clean, a_clean) / dq_ds_noise_floor,
-        "clean_dq_dT_RMSE/noise": rmse(b_pred_clean, b_clean) / dq_dT_noise_floor,
+        "clean_dq_ds_RMSE/noise": clean_dq_ds_rmse / dq_ds_noise_floor if dq_ds_noise_floor else np.nan,
+        "clean_dq_dT_RMSE/noise": clean_dq_dT_rmse / dq_dT_noise_floor if dq_dT_noise_floor else np.nan,
         "entropy_violation_%": 100.0 * np.mean(q_pred_clean * s_clean > PHYSICS_TOL),
         "worst_entropy_violation": np.nanmax(entropy_values),
         "deriv_violation_%": 100.0 * np.mean(a_pred_clean > PHYSICS_TOL),
@@ -296,6 +307,25 @@ def comparison(exp_name, methods, datasets):
 
 
 if __name__ == "__main__":
+    '''
+    All methods: (probably should organize this list ALSO pchip not working)
+    'Analytic',
+    'FiniteDiff',
+    'CubicSpline',
+    'PCHIP',
+    'SavGol',
+    'Smooth+PCHIP',
+    'RBF',
+    'KISS-GP',
+
+    Datasets:
+    'nonlinear_no_noise.csv', 
+    'nonlinear_low_noise.csv', 
+    'nonlinear_high_noise.csv',
+    'linear_no_noise.csv',
+    'linear_medium_noise.csv',
+    '''
+
     exp_name = "bello"
 
     methods = [
