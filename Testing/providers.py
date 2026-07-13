@@ -54,7 +54,7 @@ except (ImportError, OSError):
     LinRegRFFDerivativeProviderST = None
 
 try:
-    from Methods.TabularDataMethods.MaternGPMonotone.maternGPMonotone_regularized import MonotoneGPFluxST
+    from Methods.TabularDataMethods.MaternGPMonotone.maternGPMonotoneRegUpdated import MonotoneGPFluxST
 except (ImportError, OSError):
     MonotoneGPFluxST = None
 
