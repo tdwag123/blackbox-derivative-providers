@@ -117,7 +117,6 @@ def accuracy_correctness(model, df, training_df):
     clean_q_rmse = rmse(q_pred_clean, q_clean)
     clean_dq_ds_rmse = rmse(a_pred_clean, a_clean)
     clean_dq_dT_rmse = rmse(b_pred_clean, b_clean)
-
     noisy_q_noise_units = noise_normalized_rmse(q_pred_noisy, q_obs_noisy, noise_std_noisy,)
 
     entropy_values = np.maximum(0.0, q_pred_clean * s_clean)
@@ -280,6 +279,8 @@ def comparison(exp_name, methods, datasets):
                     "chop_grid_s": CHOP_GRID_S,
                     "chop_grid_T": CHOP_GRID_T,
                     "max_rows_per_cell": MAX_ROWS_PER_CELL,
+                    "regularization_type": model.get("regularization_type", "none"),
+                    "regularization_strength": model.get("regularization_strength", 0.0),
                 }
                 print("Starting accuracy evaluation..")
                 row.update(accuracy_correctness(model, df, training_df))
@@ -319,8 +320,8 @@ if __name__ == "__main__":
     'KISS-GP',
 
     Datasets:
-    'nonlinear_no_noise.csv', 
-    'nonlinear_low_noise.csv', 
+    'nonlinear_no_noise.csv',
+    'nonlinear_low_noise.csv',
     'nonlinear_high_noise.csv',
     'linear_no_noise.csv',
     'linear_medium_noise.csv',
@@ -328,14 +329,33 @@ if __name__ == "__main__":
 
     exp_name = "bello"
 
-    methods = [
-        'Analytic',
-        'rff',
-        'cubicspline',
-        'rbf',
-        'savgol',
-        'kissgp'
+    regularization_options = [
+        "",
+        "+reg=laplacian:0.01",
+        "+reg=laplacian:0.1",
+        "+reg=gradient:0.03",
+        "+reg=gradient:0.3",
     ]
+    regularized_methods = [
+        "FiniteDiff",
+        "rff",
+        "cubicspline",
+        "pchip",
+        "smooth+pchip",
+        "rbf",
+        "FDMatern52",
+        "FDIntegratedEpanechnikov",
+        "savgol",
+    ]
+    dependency_check_methods = [
+        "kissgp",
+        "mlp",
+    ]
+    methods = [
+        method + regularization
+        for method in regularized_methods
+        for regularization in regularization_options
+    ] + dependency_check_methods
 
     dataset_dir = ROOT / "Data" / "NoisyDeterministicOracles" / "datasets"
     dataset_paths = [
