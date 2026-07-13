@@ -47,6 +47,11 @@ try:
 except (ImportError, OSError):
     PenalizedRFFDerivativeProviderST = None
 
+try:
+    from Methods.TabularDataMethods.MaternGPMonotone.maternGPMonotone_regularized import MonotoneGPFluxST
+except (ImportError, OSError):
+    MonotoneGPFluxST = None
+
 def parse_method_spec(method):
     method_text = str(method)
     if "+" not in method_text:
@@ -322,7 +327,35 @@ def build_provider(method, df, training_df):
 
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
-        
+        elif method_key == "maternGPMonotone_regularized":
+            noise_std = (
+                training_df["sigma"].to_numpy(dtype=float)
+                if "sigma" in training_df.columns
+                else None
+            )
+
+    provider = MonotoneGPFluxST(
+        training_df["s"].to_numpy(dtype=float),
+        training_df["T"].to_numpy(dtype=float),
+        q_noisy_data,
+        noise_std=noise_std,
+        learn_neg_flux=True,
+        n_virtual_per_axis=10,
+        probit_nu=1e-3,
+        ep_max_iter=20,
+        ep_damping=0.7,
+        ep_tol=1e-5,
+        n_restarts_optimizer=0,
+        random_state=42,
+        use_tikhonov=True,
+        tikhonov_strength=1e-2,
+        tikhonov_target="deriv",
+        verbose=False,
+    )
+
+    # MonotoneGPFluxST.evaluate() accepts physical s and T and returns
+    # physical q, dq/ds, and dq/dT, so do not use scaled_flux here.
+    flux_law = unscaled_flux(provider)
 
     # ADD MORE METHODS/MODELS HERE
 
