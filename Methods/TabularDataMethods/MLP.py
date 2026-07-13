@@ -1,3 +1,7 @@
+from jax import config
+
+config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 from jax import grad, jit, vmap, random
 import numpy as np
@@ -211,7 +215,7 @@ class MLP:
 
     @staticmethod
     def _prepare_x(x): # (watch out if passing in 1 sample)
-        array = jnp.asarray(x, dtype=jnp.float32)
+        array = jnp.asarray(x, dtype=jnp.float64)
         if array.ndim == 1:
             array = array.reshape(-1, 1)
         if array.ndim != 2:
@@ -220,7 +224,7 @@ class MLP:
 
     @staticmethod
     def _prepare_y(y):
-        array = jnp.asarray(y, dtype=jnp.float32)
+        array = jnp.asarray(y, dtype=jnp.float64)
         if array.ndim == 1:
             array = array.reshape(-1, 1)
         if array.ndim != 2:
