@@ -318,7 +318,7 @@ if __name__ == "__main__":
     'Smooth+PCHIP',
     'RBF',
     'KISS-GP',
-    'RFF'
+    'RidgeRFF'
     'PenaltyRFF'
 
     Datasets:
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     ]
     regularized_methods = [
         "FiniteDiff",
-        "rff",
+        "ridge_rff",
         "penalty_rff",
         "cubicspline",
         "pchip",

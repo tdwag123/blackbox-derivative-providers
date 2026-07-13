@@ -38,9 +38,9 @@ except (ImportError, OSError):
     MLP = None
 
 try:
-    from Methods.TabularDataMethods.RandomFeature.RFF import RFFDerivativeProviderST
+    from Methods.TabularDataMethods.RandomFeature.RFF_ridge import RidgeRFFDerivativeProviderST
 except (ImportError, OSError):
-    RFFDerivativeProviderST = None
+    RidgeRFFDerivativeProviderST = None
 
 try:
     from Methods.TabularDataMethods.RandomFeature.RFF_penalty import PenalizedRFFDerivativeProviderST
@@ -293,11 +293,11 @@ def build_provider(method, df, training_df):
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
 
-    elif method_key == "rff":
-        if RFFDerivativeProviderST is None:
+    elif method_key == "ridge_rff":
+        if RidgeRFFDerivativeProviderST is None:
             raise ImportError("RFF requires scikit-learn dependencies")
 
-        provider = RFFDerivativeProviderST(
+        provider = RidgeRFFDerivativeProviderST(
             s_hat_data,
             T_hat_data,
             q_noisy_data,

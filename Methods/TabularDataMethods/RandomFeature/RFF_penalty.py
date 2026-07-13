@@ -84,6 +84,7 @@ class PenalizedRFFModel():
         y_centered = y - self.intercept_
 
         self.coef_ = np.linalg.solve(
+            # new_X.T is transpose of new_X
             new_X.T @ new_X + self.alpha * D,
             new_X.T @ y_centered
         )
@@ -152,7 +153,7 @@ def example_simple_1d():
 
     X = s_data.reshape(-1, 1)
 
-    model = RFFModel()
+    model = PenalizedRFFModel()
     model.fit(X, q_data)
     q_pred = model.predict(X)
 
@@ -230,7 +231,7 @@ def example_2d():
 
     X = np.column_stack([s_data, T_data])
 
-    model = RFFModel()
+    model = PenalizedRFFModel()
     model.fit(X, q_data)
     q_pred = model.predict(X)
     dq_dX_pred = model.predict_dq_dX(X)

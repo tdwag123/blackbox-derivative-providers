@@ -7,10 +7,10 @@ from sklearn.linear_model import Ridge
 pyrfm: A library for random feature maps in Python, https://neonnnnn.github.io/pyrfm/.
 """
 
-class RFFDerivativeProviderST:
+class RidgeRFFDerivativeProviderST:
     def __init__(self, s_data, T_data, q_data, **kwargs):
         X = np.column_stack([s_data, T_data])
-        self.model = RFFModel(**kwargs)
+        self.model = RidgeRFFModel(**kwargs)
         self.model.fit(X, q_data)
 
     def evaluate(self, s_q, T_q):
@@ -29,7 +29,7 @@ class RFFDerivativeProviderST:
         return q, dq_ds, dq_dT
     
 
-class RFFModel():
+class RidgeRFFModel():
     """
     Random Fourier Features model for n-D constitutive laws using RBF kernel approximation and ridge regression
     (X) -> random Fourier -> phi(X) -> ridge regression -> predict q -> analytically solve for predicted dq_dX
@@ -152,7 +152,7 @@ def example_simple_1d():
 
     X = s_data.reshape(-1, 1)
 
-    model = RFFModel()
+    model = RidgeRFFModel()
     model.fit(X, q_data)
     q_pred = model.predict(X)
 
@@ -230,7 +230,7 @@ def example_2d():
 
     X = np.column_stack([s_data, T_data])
 
-    model = RFFModel()
+    model = RidgeRFFModel()
     model.fit(X, q_data)
     q_pred = model.predict(X)
     dq_dX_pred = model.predict_dq_dX(X)
