@@ -1,7 +1,3 @@
-from jax import config
-
-config.update("jax_enable_x64", True)
-
 import jax.numpy as jnp
 from jax import grad, jit, vmap, random, nn, config
 import numpy as np
