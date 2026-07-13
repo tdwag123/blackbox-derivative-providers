@@ -59,13 +59,13 @@ learnNegFlux = True
 matern_nu = 2.5
 
 # number of virtual derivative eval points in each input direction
-nVirtualPerAxis = 10 # since we use 5 in a 2D (s,T) domain, 25 eval points; should try 100
+nVirtualPerAxis = 15 # since we use 5 in a 2D (s,T) domain, 25 eval points; should try 100
 
 # as nu --> 0, the probit function becomes more step-like
-probit_nu = 1e-3 # less sharp than monotonicity paper (1e-6)
+probit_nu = 1e-5 # less sharp than monotonicity paper (1e-6)
 
 # expectation propagation presets; damping avoids oscillations in iterative procedure
-EPMaxIter = 20 # would suggest 100
+EPMaxIter = 40 # would suggest 100
 EPDamping = 0.7
 EPTol = 1e-5
 
@@ -83,8 +83,8 @@ nRestartsOpti = 0 # should be 9 per what I've seen, but this is just for a test 
 
 # optional tikhonov regularization for EP latent vector
 useTikhonovRegularization = True
-tikhonovStrength = 1e-2 # lambda term in L2 reg; try 1e-6 to 1e-2
-tikhonovTarget = "deriv" # "joint" reg f_X and d_Z; "fxn" reg f_X; "deriv" reg d_Z
+tikhonovStrength = 1e-1 # lambda term in L2 reg; try 1e-6 to 1e-2
+tikhonovTarget = "fxn" # "joint" reg f_X and d_Z; "fxn" reg f_X; "deriv" reg d_Z
 
 """
 -----------------------------------------------------------------------------------
@@ -826,46 +826,322 @@ class EPMonotoneGP:
         
         return self
 
-    def predict_mean_and_ds(self, X_star: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        def predict_mean_and_gradient(
+                self, X_star: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray]:
+            """
+            Predict the posterior mean of ``f`` and its gradient in model coordinates.
+
+            Parameters
+            ----------
+            X_star : np.ndarray, shape (N, D) or (D,)
+                Query points in the same standardized coordinates used in ``fit``.
+
+            Returns
+            -------
+            f_mean : np.ndarray, shape (N,)
+                Posterior mean of the standardized latent function.
+            gradient_mean : np.ndarray, shape (N, D)
+                Posterior mean of the derivatives with respect to each standardized
+                input coordinate.
+            """
+            if self.result_ is None:
+                raise RuntimeError("EPMonotoneGP must be fit before prediction.")
+
+            res = self.result_
+            X_star = np.asarray(X_star, dtype=float)
+            if X_star.ndim == 1:
+                X_star = X_star.reshape(1, -1)
+            if X_star.ndim != 2:
+                raise ValueError("X_star must be a 1-D point or a 2-D array of points.")
+            if X_star.shape[1] != res.X_train.shape[1]:
+                raise ValueError(
+                    f"Expected {res.X_train.shape[1]} input columns; "
+                    f"received {X_star.shape[1]}."
+                )
+            if not np.all(np.isfinite(X_star)):
+                raise ValueError("X_star contains NaN or infinite values.")
+
+            constrained_dim = res.derivative_dim
+
+            # Cov(f*, u), where u = [f(X_train), d_constrained(X_virtual)].
+            K_star_f = res.kernel.K(X_star, res.X_train)
+            K_star_d = res.kernel.dK_dx_prime(
+                X_star, res.X_virtual, constrained_dim
+            )
+            K_star_u = np.hstack([K_star_f, K_star_d])
+            f_mean = K_star_u @ res.alpha_for_prediction
+
+            # Cov(df*/dx_dim, u) for every input coordinate.
+            gradient_mean = np.empty((X_star.shape[0], X_star.shape[1]), dtype=float)
+            for dim in range(X_star.shape[1]):
+                D_star_f = res.kernel.dK_dx(X_star, res.X_train, dim)
+                D_star_d = res.kernel.d2K_dxdx_prime(
+                    X_star, res.X_virtual, dim, constrained_dim
+                )
+                D_star_u = np.hstack([D_star_f, D_star_d])
+                gradient_mean[:, dim] = D_star_u @ res.alpha_for_prediction
+
+            return f_mean, gradient_mean
+
+        def predict_mean_and_derivative(
+                self, X_star: np.ndarray, dim: int
+        ) -> tuple[np.ndarray, np.ndarray]:
+            """Predict ``f`` and one derivative in standardized model coordinates."""
+            f_mean, gradient_mean = self.predict_mean_and_gradient(X_star)
+            dim = int(dim)
+            if dim < 0 or dim >= gradient_mean.shape[1]:
+                raise ValueError(
+                    f"dim must be between 0 and {gradient_mean.shape[1] - 1}; got {dim}."
+                )
+            return f_mean, gradient_mean[:, dim]
+
+        def predict_mean_and_ds(self, X_star: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            """Backwards-compatible predictor for the constrained derivative."""
+            return self.predict_mean_and_derivative(X_star, self.derivative_dim)
+
+    class MonotoneGPFluxST:
         """
-        Predict posterior mean of f and df/ds (or df/dT depending on derivative_dim)
-        
-        The GP prior gives us [f*; u] ~ N(0, [K**, K*u; Ku*, Kuu]):
-            Thus, the posterior mean is E[f* | u] = (K*u)(Kuu)^{-1} * u
-            
-            Recall q(u) ~ N(mu, Sigma), 
-                        where mu = Sigma*eta, Sigma = [K^{-1} + diag(tau)]^{-1}
-            Thus, E_q[E[f* | u]] = (K*u)(Kuu)^{-1} * E_q[u] = (K*u)(Kuu)^{-1} * mu
-            In the previous code, where we fit the EP model, alpha = (Kuu)^{-1} * mu
-            
-            Analagously, for our derivatives, we compute the posterior mean 
-            E[d* | u] = (D*u) * (Kuu)^{-1} * u, where D*u := Cov(d*, u)
-            
-            
-        
+        Physical-unit flux provider compatible with the shared testing interface.
+
+        The low-level :class:`EPMonotoneGP` works in standardized coordinates and
+        models a latent function ``f``.  This adapter owns the input/output scalers,
+        optionally learns ``f = -q`` so the monotonicity constraint is positive, and
+        exposes the common provider contract::
+
+            q, dq_ds, dq_dT = provider.evaluate(s_q, T_q)
+
+        All three returned arrays are in physical units.
         """
 
-        res = self.result_
-        X_star = np.asarray(X_star, dtype=float)
-        d = res.derivative_dim
+        def __init__(
+                self,
+                s_train: np.ndarray,
+                T_train: np.ndarray,
+                q_train: np.ndarray,
+                *,
+                noise_std: float | np.ndarray | None = None,
+                learn_neg_flux: bool = True,
+                n_virtual_per_axis: int = 10,
+                probit_nu: float = 1e-3,
+                ep_max_iter: int = 20,
+                ep_damping: float = 0.7,
+                ep_tol: float = 1e-5,
+                jitter: float = 1e-8,
+                n_restarts_optimizer: int = 0,
+                random_state: int = 42,
+                use_tikhonov: bool = True,
+                tikhonov_strength: float = 1e-2,
+                tikhonov_target: Literal["joint", "fxn", "deriv"] = "deriv",
+                verbose: bool = False,
+        ):
+            self.learn_neg_flux = bool(learn_neg_flux)
+            self.n_virtual_per_axis = int(n_virtual_per_axis)
+            self.probit_nu = float(probit_nu)
+            self.ep_max_iter = int(ep_max_iter)
+            self.ep_damping = float(ep_damping)
+            self.ep_tol = float(ep_tol)
+            self.jitter = float(jitter)
+            self.n_restarts_optimizer = int(n_restarts_optimizer)
+            self.random_state = int(random_state)
+            self.tikhonov = TikhonovRegularization(
+                enabled=bool(use_tikhonov),
+                strength=float(tikhonov_strength),
+                target=tikhonov_target,
+            )
+            self.verbose = bool(verbose)
 
-        # cross-cov between f* and u = [f_X = f_train, d_Z = d_virtual].
-        K_star_f = res.kernel.K(X_star, res.X_train)
-        K_star_d = res.kernel.dK_dx_prime(X_star, res.X_virtual, d)
-        K_star_u = np.hstack([K_star_f, K_star_d])
-        
-        # posterior mean of f
-        f_mean = K_star_u @ res.alpha_for_prediction
+            if self.n_virtual_per_axis < 1:
+                raise ValueError("n_virtual_per_axis must be at least 1.")
+            if self.ep_max_iter < 1:
+                raise ValueError("ep_max_iter must be at least 1.")
+            if self.probit_nu <= 0.0:
+                raise ValueError("probit_nu must be positive.")
+            if self.jitter <= 0.0:
+                raise ValueError("jitter must be positive.")
 
-        # cross-cov between df*/ds and u.
-        D_star_f = res.kernel.dK_dx(X_star, res.X_train, d)
-        D_star_d = res.kernel.d2K_dxdx_prime(X_star, res.X_virtual, d, d)
-        D_star_u = np.hstack([D_star_f, D_star_d])
-        
-        # posterior mean of df/ds
-        ds_mean = D_star_u @ res.alpha_for_prediction
+            self.x_scaler_: StandardScaler | None = None
+            self.y_scaler_: StandardScaler | None = None
+            self.ordinary_gp_: GaussianProcessRegressor | None = None
+            self.model_: EPMonotoneGP | None = None
+            self.X_train_raw_: np.ndarray | None = None
+            self.X_train_: np.ndarray | None = None
+            self.X_virtual_raw_: np.ndarray | None = None
+            self.X_virtual_: np.ndarray | None = None
+            self.noise_variance_: float | None = None
 
-        return f_mean, ds_mean
+            self.fit(s_train, T_train, q_train, noise_std=noise_std)
+
+        @staticmethod
+        def _training_arrays(
+                s_train: np.ndarray,
+                T_train: np.ndarray,
+                q_train: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            s = np.asarray(s_train, dtype=float).reshape(-1)
+            T = np.asarray(T_train, dtype=float).reshape(-1)
+            q = np.asarray(q_train, dtype=float).reshape(-1)
+
+            if not (s.size == T.size == q.size):
+                raise ValueError(
+                    "s_train, T_train, and q_train must contain the same number "
+                    "of samples."
+                )
+            if s.size < 2:
+                raise ValueError("At least two training samples are required.")
+            if not (
+                    np.all(np.isfinite(s))
+                    and np.all(np.isfinite(T))
+                    and np.all(np.isfinite(q))
+            ):
+                raise ValueError("Training data contains NaN or infinite values.")
+
+            return np.column_stack([s, T]), q
+
+        @staticmethod
+        def _standardized_noise_variance(
+                noise_std: float | np.ndarray | None, y_scale: float
+        ) -> float:
+            # When no physical noise estimate is supplied, use a modest default in
+            # standardized output units.  Supplying training_df["sigma"] is preferred.
+            if noise_std is None:
+                return 1e-6
+
+            sigma = np.asarray(noise_std, dtype=float).reshape(-1)
+            if sigma.size == 0 or not np.all(np.isfinite(sigma)):
+                raise ValueError("noise_std must contain finite values.")
+            if np.any(sigma < 0.0):
+                raise ValueError("noise_std cannot contain negative values.")
+
+            sigma_raw = float(np.mean(sigma))
+            return max((sigma_raw / y_scale) ** 2, 1e-10)
+
+        def fit(
+                self,
+                s_train: np.ndarray,
+                T_train: np.ndarray,
+                q_train: np.ndarray,
+                *,
+                noise_std: float | np.ndarray | None = None,
+        ) -> "MonotoneGPFluxST":
+            """Fit the monotone GP from physical ``(s, T, q)`` training data."""
+            X_raw, q_raw = self._training_arrays(s_train, T_train, q_train)
+            latent_raw = -q_raw if self.learn_neg_flux else q_raw
+
+            x_scaler = StandardScaler().fit(X_raw)
+            y_scaler = StandardScaler().fit(latent_raw.reshape(-1, 1))
+            X_train = x_scaler.transform(X_raw)
+            y_train = y_scaler.transform(latent_raw.reshape(-1, 1)).ravel()
+
+            y_scale = float(y_scaler.scale_[0])
+            if not np.isfinite(y_scale) or y_scale <= 0.0:
+                raise ValueError("The output scale must be finite and positive.")
+            noise_variance = self._standardized_noise_variance(noise_std, y_scale)
+
+            sklearn_kernel = ConstantKernel(1.0, (1e-3, 1e3)) * Matern(
+                length_scale=np.ones(2),
+                length_scale_bounds=(1e-3, 1e3),
+                nu=2.5,
+            )
+            ordinary_gp = GaussianProcessRegressor(
+                kernel=sklearn_kernel,
+                alpha=noise_variance,
+                normalize_y=False,
+                n_restarts_optimizer=self.n_restarts_optimizer,
+                random_state=self.random_state,
+            )
+            ordinary_gp.fit(X_train, y_train)
+
+            variance = float(ordinary_gp.kernel_.k1.constant_value)
+            lengthscales = np.asarray(
+                ordinary_gp.kernel_.k2.length_scale, dtype=float
+            )
+            kernel = Matern52(variance=variance, lengthscales=lengthscales)
+
+            X_virtual_raw = make_virtual_grid(X_raw, self.n_virtual_per_axis)
+            X_virtual = x_scaler.transform(X_virtual_raw)
+
+            model = EPMonotoneGP(
+                kernel=kernel,
+                noise_variance=noise_variance,
+                derivative_dim=0,
+                probit_nu=self.probit_nu,
+                max_iter=self.ep_max_iter,
+                damping=self.ep_damping,
+                tol=self.ep_tol,
+                jitter=self.jitter,
+                tikhonov=self.tikhonov,
+                verbose=self.verbose,
+            )
+            model.fit(X_train, y_train, X_virtual)
+
+            self.x_scaler_ = x_scaler
+            self.y_scaler_ = y_scaler
+            self.ordinary_gp_ = ordinary_gp
+            self.model_ = model
+            self.X_train_raw_ = X_raw
+            self.X_train_ = X_train
+            self.X_virtual_raw_ = X_virtual_raw
+            self.X_virtual_ = X_virtual
+            self.noise_variance_ = noise_variance
+
+            if self.verbose:
+                print("Ordinary GP kernel after hyperparameter optimization:")
+                print(ordinary_gp.kernel_)
+
+            return self
+
+        def evaluate(
+                self, s_q: np.ndarray, T_q: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            """
+            Evaluate ``q``, ``dq/ds``, and ``dq/dT`` at physical query points.
+
+            ``s_q`` and ``T_q`` may be scalars or broadcast-compatible arrays.
+            The outputs are NumPy arrays with the broadcast shape (and are always
+            at least one-dimensional for scalar inputs).
+            """
+            if self.model_ is None or self.x_scaler_ is None or self.y_scaler_ is None:
+                raise RuntimeError("MonotoneGPFluxST must be fit before evaluate().")
+
+            s = np.atleast_1d(np.asarray(s_q, dtype=float))
+            T = np.atleast_1d(np.asarray(T_q, dtype=float))
+            try:
+                s, T = np.broadcast_arrays(s, T)
+            except ValueError as exc:
+                raise ValueError("s_q and T_q must be broadcast-compatible.") from exc
+
+            if not (np.all(np.isfinite(s)) and np.all(np.isfinite(T))):
+                raise ValueError("Query data contains NaN or infinite values.")
+
+            output_shape = s.shape
+            X_raw = np.column_stack([s.ravel(), T.ravel()])
+            X_standardized = self.x_scaler_.transform(X_raw)
+
+            f_standardized, gradient_standardized = (
+                self.model_.predict_mean_and_gradient(X_standardized)
+            )
+
+            y_mean = float(self.y_scaler_.mean_[0])
+            y_scale = float(self.y_scaler_.scale_[0])
+            x_scale = np.asarray(self.x_scaler_.scale_, dtype=float)
+
+            f_raw = y_mean + y_scale * f_standardized
+            gradient_raw = (
+                    y_scale * gradient_standardized / x_scale.reshape(1, -1)
+            )
+
+            # f = -q when learn_neg_flux=True; otherwise f = q.
+            flux_sign = -1.0 if self.learn_neg_flux else 1.0
+            q = flux_sign * f_raw
+            dq_ds = flux_sign * gradient_raw[:, 0]
+            dq_dT = flux_sign * gradient_raw[:, 1]
+
+            return (
+                q.reshape(output_shape),
+                dq_ds.reshape(output_shape),
+                dq_dT.reshape(output_shape),
+            )
 
 
 """
