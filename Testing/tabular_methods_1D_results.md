@@ -20,10 +20,6 @@ FEM cost columns include method build time, Newton steps, total solve wall-clock
 
 Methods tested: CubicSpline, PCHIP, Smooth+PCHIP, RBF, SavGol, KISS-GP, FiniteDiff, and Analytic.
 
-
-
-
-
 ## nonlinear_high_noise
 
 Dataset: `Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv`
@@ -34,7 +30,7 @@ Training rows after grid chop: `289` of `3000` (`17x17`, max `1` per cell)
 
 Noisy held-out test rows: `500`; clean random evaluation points: `500`
 
-Provider build time, including GP training: `1.94 s`
+Provider build time, including GP training: `1.38 s`
 
 FEM plot: `Data/Images/tabular_methods_fem_solutions_nonlinear_high_noise.png`
 
@@ -66,24 +62,18 @@ FEM plot: `Data/Images/tabular_methods_fem_solutions_nonlinear_high_noise.png`
 
 | method | status | build_s | newton_steps | flux_calls | final_residual | rel_solution_err | solve_total_s | flux_eval_s | nonflux_s | avg_flux_eval_us |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FiniteDiff | not converged | 8.8187e-04 | 12 | 5200 | 1.2294e-01 | 4.4072e-03 | 4.9028e-01 | 4.4761e-01 | 4.2672e-02 | 8.6079e+01 |
-| CubicSpline | not converged | 1.6049e-03 | 35 | 43680 | 6.1506e-02 | 8.3846e-03 | 6.3953e-01 | 3.5489e-01 | 2.8464e-01 | 8.1249e+00 |
-| Analytic | ok | 0.0000e+00 | 5 | 720 | 2.9847e-14 | 0.0000e+00 | 5.4387e-03 | 6.5275e-04 | 4.7860e-03 | 9.0659e-01 |
-| RFF | ok | 2.1302e-02 | 6 | 880 | 1.6988e-13 | 8.1088e-03 | 9.0075e-02 | 8.1778e-02 | 8.2970e-03 | 9.2930e+01 |
-| SavGol | ok | 1.4375e-05 | 8 | 1200 | 3.2543e-10 | 8.5329e-03 | 1.6668e-01 | 1.5773e-01 | 8.9435e-03 | 1.3145e+02 |
-| KISS-GP | ok | 1.8517e+00 | 5 | 720 | 4.5737e-14 | 2.3940e-02 | 1.1082e+00 | 1.1007e+00 | 7.4700e-03 | 1.5288e+03 |
-| RBF | ok | 1.6983e-02 | 6 | 880 | 1.7040e-13 | 4.7911e-02 | 2.3007e-02 | 1.6917e-02 | 6.0897e-03 | 1.9224e+01 |
+| FiniteDiff | not converged | 8.4829e-04 | 12 | 5200 | 1.2294e-01 | 4.4072e-03 | 4.4865e-01 | 4.1052e-01 | 3.8126e-02 | 7.8946e+01 |
+| CubicSpline | not converged | 1.0977e-03 | 35 | 43680 | 6.1506e-02 | 8.3846e-03 | 6.5104e-01 | 3.6240e-01 | 2.8864e-01 | 8.2967e+00 |
+| Analytic | ok | 0.0000e+00 | 5 | 720 | 2.9847e-14 | 0.0000e+00 | 5.3169e-03 | 6.4741e-04 | 4.6695e-03 | 8.9918e-01 |
+| RFF | ok | 1.4768e-02 | 6 | 880 | 1.6988e-13 | 8.1088e-03 | 8.7679e-02 | 7.9513e-02 | 8.1653e-03 | 9.0356e+01 |
+| SavGol | ok | 1.6167e-05 | 8 | 1200 | 3.2543e-10 | 8.5329e-03 | 1.6550e-01 | 1.5666e-01 | 8.8323e-03 | 1.3055e+02 |
+| KISS-GP | ok | 1.3034e+00 | 5 | 720 | 4.5737e-14 | 2.3940e-02 | 1.1097e+00 | 1.1025e+00 | 7.2468e-03 | 1.5312e+03 |
+| RBF | ok | 9.6264e-03 | 6 | 880 | 1.7040e-13 | 4.7911e-02 | 2.2866e-02 | 1.6781e-02 | 6.0848e-03 | 1.9069e+01 |
 
 ### Quick read
 
 - Best converged method by solution error: `Analytic` with relative solution error `0.000e+00`.
 - Non-converged or failed methods: `FiniteDiff`, `CubicSpline`.
-
-
-
-
-
-
 
 
 ## nonlinear_low_noise
@@ -128,26 +118,18 @@ FEM plot: `Data/Images/tabular_methods_fem_solutions_nonlinear_low_noise.png`
 
 | method | status | build_s | newton_steps | flux_calls | final_residual | rel_solution_err | solve_total_s | flux_eval_s | nonflux_s | avg_flux_eval_us |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RBF | not converged | 2.5265e-03 | 14 | 20800 | 5.4163e-02 | 5.7675e-02 | 5.3518e-01 | 3.9587e-01 | 1.3931e-01 | 1.9032e+01 |
-| Analytic | ok | 0.0000e+00 | 5 | 720 | 2.1713e-14 | 0.0000e+00 | 5.2838e-03 | 6.4900e-04 | 4.6348e-03 | 9.0139e-01 |
-| SavGol | ok | 8.0000e-06 | 6 | 880 | 2.6836e-10 | 2.8787e-03 | 1.2193e-01 | 1.1538e-01 | 6.5485e-03 | 1.3112e+02 |
-| RFF | ok | 7.0210e-03 | 5 | 720 | 1.7543e-14 | 3.6017e-03 | 7.3826e-02 | 6.7095e-02 | 6.7316e-03 | 9.3187e+01 |
-| FiniteDiff | ok | 1.1292e-04 | 23 | 3760 | 5.5978e-09 | 8.4635e-03 | 3.2614e-01 | 2.9880e-01 | 2.7342e-02 | 7.9468e+01 |
-| KISS-GP | ok | 3.2044e-01 | 5 | 720 | 2.0597e-14 | 1.2076e-02 | 1.0880e+00 | 1.0808e+00 | 7.1279e-03 | 1.5012e+03 |
-| CubicSpline | ok | 5.5167e-05 | 8 | 1360 | 1.1290e-14 | 1.3344e-02 | 2.0111e-02 | 1.1137e-02 | 8.9735e-03 | 8.1891e+00 |
+| RBF | not converged | 2.4282e-03 | 14 | 20800 | 5.4163e-02 | 5.7675e-02 | 5.3171e-01 | 3.9229e-01 | 1.3942e-01 | 1.8860e+01 |
+| Analytic | ok | 0.0000e+00 | 5 | 720 | 2.1713e-14 | 0.0000e+00 | 5.4070e-03 | 6.6033e-04 | 4.7467e-03 | 9.1712e-01 |
+| SavGol | ok | 1.1167e-05 | 6 | 880 | 2.6836e-10 | 2.8787e-03 | 1.2108e-01 | 1.1462e-01 | 6.4583e-03 | 1.3025e+02 |
+| RFF | ok | 7.0448e-03 | 5 | 720 | 1.7543e-14 | 3.6017e-03 | 7.2245e-02 | 6.5623e-02 | 6.6215e-03 | 9.1143e+01 |
+| FiniteDiff | ok | 1.1275e-04 | 23 | 3760 | 5.5978e-09 | 8.4635e-03 | 3.2671e-01 | 2.9871e-01 | 2.8004e-02 | 7.9444e+01 |
+| KISS-GP | ok | 3.2295e-01 | 5 | 720 | 2.0597e-14 | 1.2076e-02 | 1.1419e+00 | 1.1344e+00 | 7.4473e-03 | 1.5756e+03 |
+| CubicSpline | ok | 5.0291e-05 | 8 | 1360 | 1.1290e-14 | 1.3344e-02 | 2.0478e-02 | 1.1413e-02 | 9.0647e-03 | 8.3918e+00 |
 
 ### Quick read
 
 - Best converged method by solution error: `Analytic` with relative solution error `0.000e+00`.
 - Non-converged or failed methods: `RBF`.
-
-
-
-
-
-
-
-
 
 
 ## linear_medium_noise
@@ -160,7 +142,7 @@ Training rows after grid chop: `289` of `3000` (`17x17`, max `1` per cell)
 
 Noisy held-out test rows: `500`; clean random evaluation points: `500`
 
-Provider build time, including GP training: `0.39 s`
+Provider build time, including GP training: `0.38 s`
 
 FEM plot: `Data/Images/tabular_methods_fem_solutions_linear_medium_noise.png`
 
@@ -192,13 +174,13 @@ FEM plot: `Data/Images/tabular_methods_fem_solutions_linear_medium_noise.png`
 
 | method | status | build_s | newton_steps | flux_calls | final_residual | rel_solution_err | solve_total_s | flux_eval_s | nonflux_s | avg_flux_eval_us |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SavGol | not converged | 1.1625e-05 | 24 | 36560 | 7.9928e-03 | 6.8907e-03 | 5.0860e+00 | 4.8138e+00 | 2.7222e-01 | 1.3167e+02 |
-| Analytic | ok | 0.0000e+00 | 2 | 240 | 2.3728e-14 | 0.0000e+00 | 1.7824e-03 | 2.2937e-04 | 1.5530e-03 | 9.5571e-01 |
-| RFF | ok | 8.6038e-03 | 5 | 720 | 1.9309e-14 | 3.5788e-03 | 7.1223e-02 | 6.4626e-02 | 6.5966e-03 | 8.9758e+01 |
-| KISS-GP | ok | 3.3072e-01 | 4 | 560 | 6.5799e-11 | 5.9026e-03 | 8.5465e-01 | 8.4908e-01 | 5.5658e-03 | 1.5162e+03 |
-| FiniteDiff | ok | 1.3483e-04 | 25 | 4000 | 6.1157e-09 | 6.5669e-03 | 3.4500e-01 | 3.1579e-01 | 2.9209e-02 | 7.8948e+01 |
-| CubicSpline | ok | 6.6584e-05 | 7 | 1280 | 8.0712e-13 | 7.1820e-03 | 1.8978e-02 | 1.0542e-02 | 8.4361e-03 | 8.2356e+00 |
-| RBF | ok | 1.9036e-03 | 4 | 560 | 4.8413e-09 | 3.3799e-02 | 1.4554e-02 | 1.0732e-02 | 3.8220e-03 | 1.9165e+01 |
+| SavGol | not converged | 1.3041e-05 | 24 | 36560 | 7.9928e-03 | 6.8907e-03 | 5.2156e+00 | 4.9361e+00 | 2.7946e-01 | 1.3501e+02 |
+| Analytic | ok | 0.0000e+00 | 2 | 240 | 2.3728e-14 | 0.0000e+00 | 1.9367e-03 | 2.4558e-04 | 1.6912e-03 | 1.0232e+00 |
+| RFF | ok | 7.4124e-03 | 5 | 720 | 1.9309e-14 | 3.5788e-03 | 7.5096e-02 | 6.8233e-02 | 6.8630e-03 | 9.4768e+01 |
+| KISS-GP | ok | 3.2094e-01 | 4 | 560 | 6.5799e-11 | 5.9026e-03 | 9.3744e-01 | 9.3076e-01 | 6.6811e-03 | 1.6621e+03 |
+| FiniteDiff | ok | 1.2783e-04 | 25 | 4000 | 6.1157e-09 | 6.5669e-03 | 3.6856e-01 | 3.3639e-01 | 3.2163e-02 | 8.4098e+01 |
+| CubicSpline | ok | 6.2833e-05 | 7 | 1280 | 8.0712e-13 | 7.1820e-03 | 1.9791e-02 | 1.1023e-02 | 8.7674e-03 | 8.6120e+00 |
+| RBF | ok | 1.6044e-03 | 4 | 560 | 4.8413e-09 | 3.3799e-02 | 1.5395e-02 | 1.1335e-02 | 4.0596e-03 | 2.0242e+01 |
 
 ### Quick read
 
