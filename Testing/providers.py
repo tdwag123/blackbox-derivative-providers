@@ -42,6 +42,10 @@ try:
 except (ImportError, OSError):
     RFFDerivativeProviderST = None
 
+try:
+    from Methods.TabularDataMethods.RandomFeature.RFF_penalty import PenalizedRFFDerivativeProviderST
+except (ImportError, OSError):
+    PenalizedRFFDerivativeProviderST = None
 
 def parse_method_spec(method):
     method_text = str(method)

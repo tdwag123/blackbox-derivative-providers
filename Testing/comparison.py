@@ -318,6 +318,8 @@ if __name__ == "__main__":
     'Smooth+PCHIP',
     'RBF',
     'KISS-GP',
+    'RFF'
+    'PenaltyRFF'
 
     Datasets:
     'nonlinear_no_noise.csv',
@@ -339,6 +341,7 @@ if __name__ == "__main__":
     regularized_methods = [
         "FiniteDiff",
         "rff",
+        "penalty_rff",
         "cubicspline",
         "pchip",
         "smooth+pchip",
