@@ -47,6 +47,12 @@ try:
 except (ImportError, OSError):
     PenalizedRFFDerivativeProviderST = None
 
+
+try:
+    from Methods.TabularDataMethods.RandomFeature.RFF_lin_reg import LinRegRFFDerivativeProviderST
+except (ImportError, OSError):
+    LinRegRFFDerivativeProviderST = None
+
 try:
     from Methods.TabularDataMethods.MaternGPMonotone.maternGPMonotone_regularized import MonotoneGPFluxST
 except (ImportError, OSError):
@@ -327,12 +333,27 @@ def build_provider(method, df, training_df):
 
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
-        elif method_key == "maternGPMonotone_regularized":
-            noise_std = (
-                training_df["sigma"].to_numpy(dtype=float)
-                if "sigma" in training_df.columns
-                else None
-            )
+
+    elif method_key == "lin_reg_rff":
+        provider = LinRegRFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            n_components=2000,
+            gamma=1.0,
+            alpha=1e-6,
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+
+    elif method_key == "maternGPMonotone_regularized":
+        noise_std = (
+            training_df["sigma"].to_numpy(dtype=float)
+            if "sigma" in training_df.columns
+            else None
+        )
 
     provider = MonotoneGPFluxST(
         training_df["s"].to_numpy(dtype=float),

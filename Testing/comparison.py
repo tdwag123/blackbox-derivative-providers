@@ -320,6 +320,7 @@ if __name__ == "__main__":
     'KISS-GP',
     'RidgeRFF'
     'PenaltyRFF'
+    'LinRegRFF'
 
     Datasets:
     'nonlinear_no_noise.csv',
@@ -342,6 +343,7 @@ if __name__ == "__main__":
         "FiniteDiff",
         "ridge_rff",
         "penalty_rff",
+        "lin_reg_rff",
         "cubicspline",
         "pchip",
         "smooth+pchip",
