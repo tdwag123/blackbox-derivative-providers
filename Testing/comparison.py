@@ -322,6 +322,7 @@ if __name__ == "__main__":
     'PenaltyRFF'
     'LinRegRFF'
     'RFF'
+    'MaternGPMonotone'
 
     Datasets:
     'nonlinear_no_noise.csv',
@@ -354,6 +355,7 @@ if __name__ == "__main__":
     dependency_check_methods = [
         "kissgp",
         "mlp",
+        "maternGPMonotone_regularized",
     ]
     methods = [
         method + regularization

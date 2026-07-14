@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import time
+import importlib.util
 
 import numpy as np
 from scipy.sparse import eye, lil_matrix
@@ -59,8 +60,22 @@ except (ImportError, OSError):
     RFFDerivativeProviderST = None
 
 try:
-    from Methods.TabularDataMethods.MaternGPMonotone.maternGPMonotoneRegUpdated import MonotoneGPFluxST
-except (ImportError, OSError):
+    monotone_gp_path = (
+        ROOT
+        / "Methods"
+        / "TabularDataMethods"
+        / "MaternGP+Monotonicity"
+        / "maternGPMonotoneRegUpdated.py"
+    )
+    monotone_gp_spec = importlib.util.spec_from_file_location(
+        "maternGPMonotoneRegUpdated",
+        monotone_gp_path,
+    )
+    monotone_gp_module = importlib.util.module_from_spec(monotone_gp_spec)
+    sys.modules[monotone_gp_spec.name] = monotone_gp_module
+    monotone_gp_spec.loader.exec_module(monotone_gp_module)
+    MonotoneGPFluxST = monotone_gp_module.MonotoneGPFluxST
+except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
 
 def parse_method_spec(method):
@@ -199,11 +214,16 @@ def build_provider(method, df, training_df):
         s_hat_data = (training_df["s"].to_numpy() - s_mean) / s_std
         T_hat_data = (training_df["T"].to_numpy() - T_mean) / T_std
         q_noisy_data = training_df["q_noisy"].to_numpy()
+        s_data = training_df["s"].to_numpy(dtype=float)
+        T_data = training_df["T"].to_numpy(dtype=float)
     else:
+        S, T = np.meshgrid(s_grid, T_grid, indexing="ij")
         S_hat, T_hat = np.meshgrid(s_hat_grid, T_hat_grid, indexing="ij")
         s_hat_data = S_hat.ravel()
         T_hat_data = T_hat.ravel()
         q_noisy_data = q_grid.ravel()
+        s_data = S.ravel()
+        T_data = T.ravel()
 
     if method_key == "analytic":
         def flux_law(s, T, xg):
@@ -326,6 +346,9 @@ def build_provider(method, df, training_df):
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
     elif method_key == "penalty_rff":
+        if PenalizedRFFDerivativeProviderST is None:
+            raise ImportError("penalty_rff requires scikit-learn dependencies")
+
         provider = PenalizedRFFDerivativeProviderST(
             s_hat_data,
             T_hat_data,
@@ -340,6 +363,9 @@ def build_provider(method, df, training_df):
 
 
     elif method_key == "lin_reg_rff":
+        if LinRegRFFDerivativeProviderST is None:
+            raise ImportError("lin_reg_rff requires scikit-learn dependencies")
+
         provider = LinRegRFFDerivativeProviderST(
             s_hat_data,
             T_hat_data,
@@ -368,35 +394,39 @@ def build_provider(method, df, training_df):
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
 
-    elif method_key == "maternGPMonotone_regularized":
+    elif method_key in {"materngpmonotone", "materngpmonotone_unregularized", "materngpmonotone_regularized"}:
+        if MonotoneGPFluxST is None:
+            raise ImportError("maternGPMonotone requires GP dependencies")
+
         noise_std = (
             training_df["sigma"].to_numpy(dtype=float)
             if "sigma" in training_df.columns
             else None
         )
+        use_internal_tikhonov = method_key == "materngpmonotone_regularized"
 
-    provider = MonotoneGPFluxST(
-        training_df["s"].to_numpy(dtype=float),
-        training_df["T"].to_numpy(dtype=float),
-        q_noisy_data,
-        noise_std=noise_std,
-        learn_neg_flux=True,
-        n_virtual_per_axis=10,
-        probit_nu=1e-3,
-        ep_max_iter=20,
-        ep_damping=0.7,
-        ep_tol=1e-5,
-        n_restarts_optimizer=0,
-        random_state=42,
-        use_tikhonov=True,
-        tikhonov_strength=1e-2,
-        tikhonov_target="deriv",
-        verbose=False,
-    )
+        provider = MonotoneGPFluxST(
+            s_data,
+            T_data,
+            q_noisy_data,
+            noise_std=noise_std,
+            learn_neg_flux=True,
+            n_virtual_per_axis=10,
+            probit_nu=1e-3,
+            ep_max_iter=20,
+            ep_damping=0.7,
+            ep_tol=1e-5,
+            n_restarts_optimizer=0,
+            random_state=42,
+            use_tikhonov=use_internal_tikhonov,
+            tikhonov_strength=1e-2,
+            tikhonov_target="deriv",
+            verbose=False,
+        )
 
-    # MonotoneGPFluxST.evaluate() accepts physical s and T and returns
-    # physical q, dq/ds, and dq/dT, so do not use scaled_flux here.
-    flux_law = unscaled_flux(provider)
+        # MonotoneGPFluxST.evaluate() accepts physical s and T and returns
+        # physical q, dq/ds, and dq/dT, so do not use scaled_flux here.
+        flux_law = unscaled_flux(provider)
 
     # ADD MORE METHODS/MODELS HERE
 
