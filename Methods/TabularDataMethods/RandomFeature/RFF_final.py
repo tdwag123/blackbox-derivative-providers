@@ -156,7 +156,7 @@ class RFFModel():
 
         # solving c = (A.T*A+alpha*D)^{-1}(A.T*y)
         if self.alpha == 0:
-            self.coef_ = np.linalg.lstsq(A_centered, y_centered, rcond=None)[0]
+            self.coef_ = np.linalg.lstsq(A_centered, y_centered, rcond=None)[0] # solve least squares, keep only learned coefficients
         else:
             self.coef_ = np.linalg.solve(
                 A_centered.T @ A_centered + self.alpha * D,
