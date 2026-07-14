@@ -64,15 +64,19 @@ class RFFModel():
                 if larger, smoother model + less overfitting + more possible underfitting. 
                 if smaller, more flexible model but more risk of fitting noise.
 
-            fit_intercept:
+            fit_intercept: whether the model learns a constant offset term.
+                if True, q_hat = Phi*beta + b. if False, q_hat = Phi*beta.
+                default is True because target q may not be centered around 0.
 
-            copy_X:
+            copy_X: whether scikit-learn can copy feature matrix before fitting
 
-            tol: 
+            tol: tolerance for solver, controls when iterative solver decides it has converged.
+                if small, more precise solve but possibly slower. if large, less precise but faster.
 
-            max_iter:
+            max_iter: max # of iterations for iterative ridge solvers. if None, then sklearn can choose.
 
-            solver:
+            solver: which numerical method is used in Ridge. if "auto", sklearn can choose.
+                other possible options: "svd", "cholesky", "lsqr", "sag"/"saga"
         """
 
         if regularization not in ['none', 'ridge', 'frequency_weighted']:
