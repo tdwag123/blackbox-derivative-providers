@@ -184,23 +184,24 @@ class FlexRFFModel():
     def predict_dq_dX(self, X):
         """
         in RBFSampler, mapping function is phi(x):
-            phi(x) = sqrt(2/n_components) cos(Wx + w)  where W is random_weights_ and w is random_offset_
-        A is computed using this mapping function.
+            phi(x) = sqrt(2/n_components) cos(W^T x + offset)  where W is random_weights_ and offset is random_offset_
+        A is made by applying this mapping function to every training/input point.
 
         regression model predicts q_hat = A*c + b where c = coef_ and b = intercept_ 
-        => grad_x(q_hat) = c^T * grad_x(A)
-        => grad_x(q_hat) = c^T * -sqrt(2/n_components) sin(W^T x + w) * W^T
+        this means that q_hat_i = phi(x_i)^T c + b  => q_hat(x) = phi(x)^T c + b
+        => grad_x(q_hat) = c^T * grad_x(phi(x))
+        => grad_x(q_hat) = c^T * -sqrt(2/n_components) sin(W^T x + offset) * W^T
         """
 
         if self.coef_ is None:
             raise RuntimeError("RFFModel must be fit before prediction.")
         
         W = self.feature_map.random_weights_ # shape (n_features, n_components)
-        w = self.feature_map.random_offset_ # shape n_components, )
+        offset = self.feature_map.random_offset_ # shape n_components, )
 
         c = self.coef_
 
-        sin_input = X @ W + w
+        sin_input = X @ W + offset
         scalar = -np.sqrt(2/self.n_components) * c
         scalar_sine = scalar * np.sin(sin_input)
         dq_dX = scalar_sine @ W.T
