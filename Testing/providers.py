@@ -39,23 +39,23 @@ except (ImportError, OSError):
     MLP = None
 
 try:
-    from Methods.TabularDataMethods.RandomFeature.RFF_ridge import RidgeRFFDerivativeProviderST
+    from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_ridge import RidgeRFFDerivativeProviderST
 except (ImportError, OSError):
     RidgeRFFDerivativeProviderST = None
 
 try:
-    from Methods.TabularDataMethods.RandomFeature.RFF_penalty import PenalizedRFFDerivativeProviderST
+    from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_penalty import PenalizedRFFDerivativeProviderST
 except (ImportError, OSError):
     PenalizedRFFDerivativeProviderST = None
 
 
 try:
-    from Methods.TabularDataMethods.RandomFeature.RFF_lin_reg import LinRegRFFDerivativeProviderST
+    from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_lin_reg import LinRegRFFDerivativeProviderST
 except (ImportError, OSError):
     LinRegRFFDerivativeProviderST = None
 
 try:
-    from Methods.TabularDataMethods.RandomFeature.RFF_general import RFFDerivativeProviderST
+    from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_general import RFFDerivativeProviderST
 except (ImportError, OSError):
     RFFDerivativeProviderST = None
 
