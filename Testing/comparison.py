@@ -324,6 +324,7 @@ if __name__ == "__main__":
     'PenaltyRFF'
     'LinRegRFF'
     'RFF'
+    'RFF_flexible'
     'MaternGPMonotone'
 
     Datasets:
@@ -346,6 +347,7 @@ if __name__ == "__main__":
     regularized_methods = [
         "FiniteDiff",
         "rff",
+        "rff_flexible",
         "cubicspline",
         "pchip",
         "smooth+pchip",

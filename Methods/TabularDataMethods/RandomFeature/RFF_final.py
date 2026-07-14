@@ -16,7 +16,7 @@ Regularization options:
 import numpy as np
 from sklearn.kernel_approximation import RBFSampler
 
-class RFFDerivativeProviderST():
+class FlexRFFDerivativeProviderST():
     def __init__(self, s_data, T_data, q_data, **kwargs):
         X = np.column_stack([s_data, T_data])
         self.model = RFFModel(**kwargs)
@@ -43,7 +43,7 @@ none: min_c ||Ac - y||^2
 ridge: min_c ||Ac - y||^2 + alpha sum |c_k|^2
 frequency_weighted: min_c ||Ac - y||_2^2 + alpha sum ||omega_k||_2^p |c_k|^2
 """
-class RFFModel():
+class FlexRFFModel():
     def __init__(self, alpha=1e-6, freq_weight=2, n_components=400, 
             gamma=0.1, random_state=None, fit_intercept=True
         ):

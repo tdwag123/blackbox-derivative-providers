@@ -60,6 +60,11 @@ except (ImportError, OSError):
     RFFDerivativeProviderST = None
 
 try:
+    from Methods.TabularDataMethods.RandomFeature.RFF_final import FlexRFFDerivativeProviderST
+except (ImportError, OSError):
+    FlexRFFDerivativeProviderST = None
+
+try:
     monotone_gp_path = (
         ROOT
         / "Methods"
@@ -388,6 +393,21 @@ def build_provider(method, df, training_df):
 
     elif method_key == "rff":
         provider = RFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            regularization='ridge',
+            n_components=2000,
+            gamma=1.0,
+            alpha=1e-6,
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+
+    elif method_key == "rff_flexible":
+        provider = FlexRFFDerivativeProviderST(
             s_hat_data,
             T_hat_data,
             q_noisy_data,
