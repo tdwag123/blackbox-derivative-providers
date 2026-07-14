@@ -1,5 +1,6 @@
 """
 Random Fourier Features general framework for toggling regularization.
+UNCONSTRAINED REGULARIZED LEAST-SQUARES PROBLEM.
 
 Regularization options:
     - No regularization (linear regression); alpha = 0. WARNING: RFF with no regularization can overfit!
