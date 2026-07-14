@@ -7,10 +7,10 @@ Regularization options:
         ---- Tikhonov regularization ----
         If p=0, then ridge regression.
 
-        ---- frequency-weighted Tikhonov regularization aaccouting for noise ----
+        ---- frequency-weighted Tikhonov regularization accounting for noise ----
         If p=1, penalty grows linearly with frequency length.
         If p=2, penalty grows quadratically with frequency length. 
-        If p>2, high-frequency freatures are punished very strongly.
+        If p>2, high-frequency features are punished very strongly.
 """
 
 import numpy as np
@@ -45,13 +45,13 @@ frequency_weighted: min_c ||Ac - y||_2^2 + alpha sum ||omega_k||_2^p |c_k|^2
 """
 class RFFModel():
     def __init__(self, alpha=1e-6, freq_weight=2, n_components=400, 
-            gamma=0.1, random_state=None, fit_intercept=True, tol=0.0001, max_iter=None, solver="auto"
+            gamma=0.1, random_state=None, fit_intercept=True
         ):
         """
             alpha: regularization strength.
                 if larger, smoother model + less overfitting + more possible underfitting. 
                 if smaller, more flexible model but more risk of fitting noise.
-                if 0, no regularization (=> LINEAR REGRESSION).
+                if 0, no regularization (=> LINEAR REGRESSION), regardless of p.
 
             freq_weight: frequency weighting, p.
                 if p=0, no frequency weighting (=> RIDGE REGRESSION).
@@ -70,7 +70,7 @@ class RFFModel():
                 if None, each run samples different random features. if 0, each run uses same features (good for debugging).
 
             fit_intercept: whether the model learns a constant offset term.
-                if True, q_hat = Phi*c + b. if False, q_hat = Phi*c.
+                if True, q_hat = A*c + b. if False, q_hat = A*c.
                 default is True because target q may not be centered around 0.
 
             tol: tolerance for solver, controls when iterative solver decides it has converged.
@@ -139,20 +139,31 @@ class RFFModel():
         frequency = np.linalg.norm(omega, axis=0) ** self.p # by setting axis=0, we compute the norm of each COLUMN
         D = np.diag(frequency)
 
-        if self.fit_intercept:
-            A_mean = A.mean(axis=0) # computes the mean of each COLUMN
-            y_mean = y.mean()
-        else:
+        # if q_hat = A*c + b where b != 0， c is coef_ and b is intercept_
+        if self.fit_intercept: # we want to learn both c and b
+            A_mean = A.mean(axis=0) # computes the average of each COLUMN in A
+            y_mean = y.mean() # computes the average of y
+            # basically, we have computed the average feature values and average target value
+        else: # b is forced to be zero
             A_mean = np.zeros(A.shape[1])
             y_mean = 0.0
 
-        A_centered = A - A_mean
+        # if fit_intercept, the following describes how far each value is from the average.
+        #   remove avg level first, fit coeffs to leftover variation, then add avg level back through the intercept
+        # if not, the following say the same as A and y respectively
+        A_centered = A - A_mean 
         y_centered = y - y_mean
 
-        self.coef_ = np.linalg.solve(
-            A_centered.T @ A_centered + self.alpha * D,
-            A_centered.T @ y_centered
-        )
+        # solving c = (A.T*A+alpha*D)^{-1}(A.T*y)
+        if self.alpha == 0:
+            self.coef_ = np.linalg.lstsq(A_centered, y_centered, rcond=None)[0]
+        else:
+            self.coef_ = np.linalg.solve(
+                A_centered.T @ A_centered + self.alpha * D,
+                A_centered.T @ y_centered
+            )
+
+        # q_hat = A*c + b => b = q_hat - A*c
         self.intercept_ = y_mean - A_mean @ self.coef_
 
         return self # feature_map is now fitted, model is now trained
@@ -166,25 +177,33 @@ class RFFModel():
         if self.coef_ is None:
             raise RuntimeError("RFFModel must be fit before prediction.")
         
-        new_X = self.feature_map.transform(X) # apply approximate feature map to input
-        return new_X @ self.coef_ + self.intercept_ # predict using linear model
+        A = self.feature_map.transform(X) # apply approximate feature map to input
+        return A @ self.coef_ + self.intercept_ # predict using linear model, q_hat = A*c + b
     
 
     def predict_dq_dX(self, X):
+        """
+        in RBFSampler, mapping function is phi(x):
+            phi(x) = sqrt(2/n_components) cos(Wx + w)  where W is random_weights_ and w is random_offset_
+        A is computed using this mapping function.
+
+        regression model predicts q_hat = A*c + b where c = coef_ and b = intercept_ 
+        => grad_x(q_hat) = c^T * grad_x(A)
+        => grad_x(q_hat) = c^T * -sqrt(2/n_components) sin(W^T x + w) * W^T
+        """
 
         if self.coef_ is None:
             raise RuntimeError("RFFModel must be fit before prediction.")
         
         W = self.feature_map.random_weights_ # shape (n_features, n_components)
-        b = self.feature_map.random_offset_ # shape n_components, )
+        w = self.feature_map.random_offset_ # shape n_components, )
 
         c = self.coef_
 
-        sin_input = X @ W + b
-        scalar = (-1) * np.sqrt(2/self.n_components)
+        sin_input = X @ W + w
+        scalar = -np.sqrt(2/self.n_components) * c
         scalar_sine = scalar * np.sin(sin_input)
-        weighted = scalar_sine * c
-        dq_dX = weighted @ W.T
+        dq_dX = scalar_sine @ W.T
         
         return dq_dX
 
