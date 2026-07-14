@@ -19,7 +19,7 @@ from sklearn.kernel_approximation import RBFSampler
 class FlexRFFDerivativeProviderST():
     def __init__(self, s_data, T_data, q_data, **kwargs):
         X = np.column_stack([s_data, T_data])
-        self.model = RFFModel(**kwargs)
+        self.model = FlexRFFModel(**kwargs)
         self.model.fit(X, q_data)
 
     def evaluate(self, s_q, T_q):
@@ -115,8 +115,8 @@ class FlexRFFModel():
         # if y.ndim=0, scalar. if 1, vector. if 2, matrix. etc. y.shape[1] returns # of columns in y.
         if y.ndim > 1 and y.shape[1] > 1:
             raise ValueError(f"y has shape {y.shape}, which looks like {y.shape[1]} targets. "
-            "RFFModel.predict_dq_dX only supports single-output regression. "
-            "Fit a separate RFFModel per output column instead."
+            "FlexRFFModel.predict_dq_dX only supports single-output regression. "
+            "Fit a separate FlexRFFModel per output column instead."
         )
 
         y = y.ravel()   # turns into (N,)
@@ -175,7 +175,7 @@ class FlexRFFModel():
         """
 
         if self.coef_ is None:
-            raise RuntimeError("RFFModel must be fit before prediction.")
+            raise RuntimeError("FlexRFFModel must be fit before prediction.")
         
         A = self.feature_map.transform(X) # apply approximate feature map to input
         return A @ self.coef_ + self.intercept_ # predict using linear model, q_hat = A*c + b
@@ -194,7 +194,7 @@ class FlexRFFModel():
         """
 
         if self.coef_ is None:
-            raise RuntimeError("RFFModel must be fit before prediction.")
+            raise RuntimeError("FlexRFFModel must be fit before prediction.")
         
         W = self.feature_map.random_weights_ # shape (n_features, n_components)
         offset = self.feature_map.random_offset_ # shape n_components, )
