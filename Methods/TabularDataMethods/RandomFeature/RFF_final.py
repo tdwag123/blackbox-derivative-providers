@@ -171,7 +171,7 @@ class FlexRFFModel():
 
     def predict(self, X):
         """
-        Based on reg_model formed by fit, predicts value for specific point.
+        After feature map is fitted, predicts value for specific point.
         """
 
         if self.coef_ is None:
