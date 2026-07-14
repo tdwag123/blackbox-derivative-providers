@@ -81,11 +81,12 @@ except (ImportError, OSError, AttributeError):
 def parse_method_spec(method):
     method_text = str(method)
     if "+" not in method_text:
-        return method_text.lower(), None
+        return method_text.lower(), None, {}
 
     parts = method_text.split("+")
     base_parts = []
     regularization = None
+    options = {}
 
     for option in parts:
         option_key = option.strip().lower()
@@ -95,10 +96,14 @@ def parse_method_spec(method):
             regularization = parse_regularization_spec("laplacian:" + option_key[9:])
         elif option_key.startswith(("laplacian:", "gradient:", "grad:", "tikhonov:")):
             regularization = parse_regularization_spec(option_key)
+        elif option_key.startswith("ridge="):
+            options["ridge_strength"] = float(option_key[6:])
+        elif option_key.startswith("ridge:"):
+            options["ridge_strength"] = float(option_key[6:])
         else:
             base_parts.append(option)
 
-    return "+".join(base_parts).lower(), regularization
+    return "+".join(base_parts).lower(), regularization, options
 
 
 def parse_regularization_spec(spec):
@@ -184,7 +189,7 @@ def unscaled_flux(provider):
     return flux_law
 
 def build_provider(method, df, training_df):
-    method_key, regularization = parse_method_spec(method)
+    method_key, regularization, method_options = parse_method_spec(method)
     start = time.perf_counter()
 
     k0 = float(df["k_0"].iloc[0])
@@ -262,6 +267,7 @@ def build_provider(method, df, training_df):
             function="gaussian",
             epsilon=1.1,
             smooth=1.0,
+            ridge_strength=method_options.get("ridge_strength", 0.0),
         )
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
@@ -289,6 +295,7 @@ def build_provider(method, df, training_df):
             grid_size=16,
             training_iter=20,
             learning_rate=0.08,
+            ridge_strength=method_options.get("ridge_strength", 0.0),
         )
         flux_law = unscaled_flux(provider)
 
@@ -446,6 +453,10 @@ def build_provider(method, df, training_df):
         "regularization_strength": (
             regularization["strength"] if regularization is not None else 0.0
         ),
+        "model_regularization_type": (
+            "ridge" if method_options.get("ridge_strength", 0.0) > 0.0 else "none"
+        ),
+        "model_regularization_strength": method_options.get("ridge_strength", 0.0),
         "s_mean": s_mean,
         "s_std": s_std,
         "T_mean": T_mean,

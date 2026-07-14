@@ -17,11 +17,13 @@ class RBFDerivativeProviderST:
         function="gaussian",
         epsilon=None,
         smooth=0.0,
+        ridge_strength=0.0,
     ):
         self.s_data = np.asarray(s_data, dtype=float)
         self.T_data = np.asarray(T_data, dtype=float)
         self.q_data = np.asarray(q_data, dtype=float)
         self.function = function
+        self.ridge_strength = float(ridge_strength)
 
         if self.s_data.shape != self.T_data.shape:
             raise ValueError("s_data and T_data must have the same shape")
@@ -34,7 +36,7 @@ class RBFDerivativeProviderST:
             self.q_data,
             function=function,
             epsilon=epsilon,
-            smooth=smooth,
+            smooth=smooth + self.ridge_strength,
         )
 
         self.epsilon = self.rbf.epsilon
