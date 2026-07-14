@@ -105,21 +105,29 @@ class RFFModel():
 
         
     def fit(self, X, y):
-        y = np.asarray(y)
+        y = np.asarray(y)   # either of shape (N,) or (N,1)
         if y.ndim > 1 and y.shape[1] > 1:
             raise ValueError(f"y has shape {y.shape}, which looks like {y.shape[1]} targets. "
             "RFFModel.predict_dq_dX only supports single-output regression. "
             "Fit a separate RFFModel per output column instead."
         )
-        y = y.ravel()
+        y = y.ravel()   # turns into (N,)
 
         Phi = self.feature_map.fit_transform(X, y)
 
         # Fit ridge regression model onto mapped feature matrix (the transformed version of X)
         if self.regularization == 'frequency_weighted':
-            W = self.feature_map.random_weights_
+            """
+            Solving min_beta ||Phi*beta - y||^2 + alpha * (sum ||omega_k||^2 beta_k^2).
+            If we take derivative wrt beta, we get 
 
-            weights = np.linalg.norm(W, axis=0) ** 2
+            Idea:   1) Get each random feature's frequency.
+                    2) Measure how high-frequency it is.
+                    3) Create penalty matrix that penalizes high-frequency feature coefficients more.
+            """
+            W = self.feature_map.random_weights_    # stores each feature's random frequency vector (each column is 1 random freq. vector)
+
+            weights = np.linalg.norm(W, axis=0) ** 2    # computes squared length of each frequency vector
             D = np.diag(weights)
 
             if self.fit_intercept:
@@ -149,7 +157,7 @@ class RFFModel():
         """
         Based on reg_model formed by fit, predicts value for specific point.
         """
-        
+
         if self.coef_ is None:
             raise RuntimeError("RFFModel must be fit before prediction.")
         
