@@ -15,6 +15,8 @@ frequency_weighted: min_beta ||Phi beta - y||^2 + alpha sum ||omega_k||^2 beta_k
 
 import numpy as np
 from sklearn.kernel_approximation import RBFSampler
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
 
 
 class RFFDerivativeProviderST():
@@ -40,14 +42,13 @@ class RFFDerivativeProviderST():
 
 
 class RFFModel():
-    def __init__(
-            self, 
-            regularization, 
+    def __init__(self, regularization, 
             n_components=400, gamma=0.1, random_state=None, 
-            alpha=1e-6
+            alpha=1e-6, fit_intercept=True, copy_X=True,
+            tol=0.0001, max_iter=None, solver="auto"
         ):
         """
-            regularization: 'none' / 'ridge' / 'weighted'
+            regularization: 'none' / 'ridge' / 'frequency_weighted'
 
             n_components: number of random Fourier features, controls # of cosine basis functions. 
                 if large, can fit more complicated fns, slower, may overfit. if small, faster but may underfit.
@@ -62,16 +63,27 @@ class RFFModel():
             alpha: regularization strength.
                 if larger, smoother model + less overfitting + more possible underfitting. 
                 if smaller, more flexible model but more risk of fitting noise.
+
+            fit_intercept:
+
+            copy_X:
+
+            tol: 
+
+            max_iter:
+
+            solver:
         """
 
-        if regularization not in ['none', 'ridge', 'weighted']:
-            raise ValueError(f"Regularization cannot be '{regularization}'."
-            "RFFModel only supports 'none', 'ridge', and 'weighted'."
+        if regularization not in ['none', 'ridge', 'frequency_weighted']:
+            raise ValueError(f"Regularization cannot be '{regularization}'. "
+            "RFFModel only supports 'none', 'ridge', and 'frequency_weighted'."
         )
         self.regularization = regularization
 
         self.n_components = n_components
         self.alpha = alpha
+        self.fit_intercept = fit_intercept
         self.coef_ = None
         self.intercept_ = None
         self.regression_model = None
@@ -82,17 +94,85 @@ class RFFModel():
             random_state=random_state
         )
 
+        if regularization == 'none':
+            self.regression_model = LinearRegression(fit_intercept=fit_intercept, copy_X=copy_X)
+        elif regularization == 'ridge':
+            self.regression_model = Ridge(alpha=alpha, fit_intercept=fit_intercept, copy_X=copy_X, max_iter=max_iter, tol=tol, solver=solver)
 
-    def _regression_model(regularization):
-        match regularization:
-            case 'none':
-                return LinearRegression(fit_intercept=True, copy_X=True, tol=0.0001)
-            case 'ridge':
-                return Ridge(alpha=self.alpha, fit_intercept=True, copy_X=True, max_iter=None, tol=0.0001, solver="auto")
-            case 'weighted':
-                return 0
-            case _:
-                raise ValueError(f"RFFModel only supports 'none', 'ridge', and 'weighted' regularizations.")
+        
+    def fit(self, X, y):
+        y = np.asarray(y)
+        if y.ndim > 1 and y.shape[1] > 1:
+            raise ValueError(f"y has shape {y.shape}, which looks like {y.shape[1]} targets. "
+            "RFFModel.predict_dq_dX only supports single-output regression. "
+            "Fit a separate RFFModel per output column instead."
+        )
+        y = y.ravel()
+
+        Phi = self.feature_map.fit_transform(X, y)
+
+        # Fit ridge regression model onto mapped feature matrix (the transformed version of X)
+        if self.regularization == 'frequency_weighted':
+            W = self.feature_map.random_weights_
+
+            weights = np.linalg.norm(W, axis=0) ** 2
+            D = np.diag(weights)
+
+            if self.fit_intercept:
+                Phi_mean = Phi.mean(axis=0)
+                y_mean = y.mean()
+            else:
+                Phi_mean = np.zeros(Phi.shape[1])
+                y_mean = 0.0
+
+            Phi_centered = Phi - Phi_mean
+            y_centered = y - y_mean
+
+            self.coef_ = np.linalg.solve(
+                Phi_centered.T @ Phi_centered + self.alpha * D,
+                Phi_centered.T @ y_centered
+            )
+            self.intercept_ = y_mean - Phi_mean @ self.coef_
+        else:
+            self.regression_model.fit(Phi, y)
+            self.coef_ = self.regression_model.coef_
+            self.intercept_ = self.regression_model.intercept_
+
+        return self # feature_map is now fitted, model is now trained
+    
+
+    def predict(self, X):
+        """
+        Based on reg_model formed by fit, predicts value for specific point.
+        """
+
+        if self.coef_ is None:
+            raise RuntimeError("RFFModel must be fit before prediction.")
+        
+        new_X = self.feature_map.transform(X) # apply approximate feature map to input
+        return new_X @ self.coef_ + self.intercept_ # predict using linear model
+    
+
+    def predict_dq_dX(self, X):
+
+        if self.coef_ is None:
+            raise RuntimeError("RFFModel must be fit before prediction.")
+        
+        W = self.feature_map.random_weights_ # shape (n_features, n_components)
+        b = self.feature_map.random_offset_ # shape n_components, )
+
+        beta = self.coef_
+
+        sin_input = X @ W + b
+        scalar = (-1) * np.sqrt(2/self.n_components)
+        scalar_sine = scalar * np.sin(sin_input)
+        weighted = scalar_sine * beta
+        dq_dX = weighted @ W.T
+        
+        return dq_dX
+
+
+    
         
 
 
