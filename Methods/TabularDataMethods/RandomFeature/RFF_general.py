@@ -149,7 +149,7 @@ class RFFModel():
         """
         Based on reg_model formed by fit, predicts value for specific point.
         """
-
+        
         if self.coef_ is None:
             raise RuntimeError("RFFModel must be fit before prediction.")
         

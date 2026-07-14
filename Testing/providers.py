@@ -54,6 +54,11 @@ except (ImportError, OSError):
     LinRegRFFDerivativeProviderST = None
 
 try:
+    from Methods.TabularDataMethods.RandomFeature.RFF_general import RFFDerivativeProviderST
+except (ImportError, OSError):
+    RFFDerivativeProviderST = None
+
+try:
     from Methods.TabularDataMethods.MaternGPMonotone.maternGPMonotoneRegUpdated import MonotoneGPFluxST
 except (ImportError, OSError):
     MonotoneGPFluxST = None
@@ -339,6 +344,21 @@ def build_provider(method, df, training_df):
             s_hat_data,
             T_hat_data,
             q_noisy_data,
+            n_components=2000,
+            gamma=1.0,
+            alpha=1e-6,
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+
+    elif method_key == "rff":
+        provider = RFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            regularization='ridge',
             n_components=2000,
             gamma=1.0,
             alpha=1e-6,

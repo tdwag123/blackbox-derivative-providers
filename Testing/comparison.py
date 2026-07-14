@@ -321,6 +321,7 @@ if __name__ == "__main__":
     'RidgeRFF'
     'PenaltyRFF'
     'LinRegRFF'
+    'RFF'
 
     Datasets:
     'nonlinear_no_noise.csv',
@@ -341,9 +342,7 @@ if __name__ == "__main__":
     ]
     regularized_methods = [
         "FiniteDiff",
-        "ridge_rff",
-        "penalty_rff",
-        "lin_reg_rff",
+        "rff",
         "cubicspline",
         "pchip",
         "smooth+pchip",
