@@ -281,6 +281,8 @@ def comparison(exp_name, methods, datasets):
                     "max_rows_per_cell": MAX_ROWS_PER_CELL,
                     "regularization_type": model.get("regularization_type", "none"),
                     "regularization_strength": model.get("regularization_strength", 0.0),
+                    "model_regularization_type": model.get("model_regularization_type", "none"),
+                    "model_regularization_strength": model.get("model_regularization_strength", 0.0),
                 }
                 print("Starting accuracy evaluation..")
                 row.update(accuracy_correctness(model, df, training_df))

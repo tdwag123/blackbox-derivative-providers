@@ -35,10 +35,12 @@ class KISSGPFluxST:
         grid_size=32,
         training_iter=75,
         learning_rate=0.1,
+        ridge_strength=0.0,
         dtype=torch.float64,
     ):
         self.dtype = dtype
         self.device = torch.device("cpu")
+        self.ridge_strength = float(ridge_strength)
 
         s_data = np.asarray(s_data, dtype=float)
         T_data = np.asarray(T_data, dtype=float)
@@ -102,6 +104,12 @@ class KISSGPFluxST:
             optimizer.zero_grad()
             output = self.model(self.model.train_inputs[0])
             loss = -mll(output, self.model.train_targets)
+            if self.ridge_strength > 0.0:
+                ridge_penalty = sum(
+                    torch.sum(parameter**2)
+                    for parameter in self.model.parameters()
+                )
+                loss = loss + self.ridge_strength * ridge_penalty
             loss.backward()
             optimizer.step()
 
