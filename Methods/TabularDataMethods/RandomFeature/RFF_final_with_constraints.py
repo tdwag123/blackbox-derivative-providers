@@ -201,7 +201,7 @@ class ConstrainedRFFModel():
                 -2 * A_centered.T @ y_centered,
                 -B,
                 np.zeros(B.shape[0]),
-                solver="auto"
+                solver="osqp"
         )
 
         if self.coef_ is None:
@@ -249,13 +249,3 @@ class ConstrainedRFFModel():
         dq_dX = (scalar * np.sin(sin_input)) @ W.T
         
         return dq_dX
-
-
-    
-        
-
-
-
-
-
-
