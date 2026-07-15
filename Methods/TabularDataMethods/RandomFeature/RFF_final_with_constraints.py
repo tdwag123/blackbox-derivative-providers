@@ -1,7 +1,7 @@
 """
 Random Fourier Features general framework for toggling regularization.
 REGULARIZED LEAST-SQUARES PROBLEM SUBJECT TO MONOTONICITY CONSTRAINTS.
-NOTE: WORK IN PROGRESS
+NOTE: WORK IN PROGRESS. CURRENTLY MONOTONICITY ONLY ENFORCED AT TRAINING POINTS.
 
 Note: constrained least squares problem can be equivalently formulated as quadratic programming problem.
     We will solve this problem as a QP.
@@ -14,7 +14,7 @@ Conceptually our optimization becomes
 
     =>  min_c (1/2) c.T Q c + (-2A.Ty).Tc   where Q = 2(A.TA+alphaD)
         subject to:
-            -Bc <= 0 where B is the derivative coefficient matrix of shape (2M, n_components)
+            -Bc <= 0 where B is the derivative coefficient matrix of shape (M*n_input_features, n_components)
             note: M is the number of points at which we enforce monotonicity
 
 Regularization options:
@@ -182,17 +182,30 @@ class ConstrainedRFFModel():
         """
 
         X_constraint = X
-        B = 0
+        W = self.feature_map.random_weights_ # shape (n_features, n_components)
+        offset = self.feature_map.random_offset_ # shape n_components, )
+
+        sin_input = X_constraint @ W + offset
+        base = -np.sqrt(2/self.n_components) * np.sin(sin_input)
+
+        B_blocks = []
+        for i in range(0,X_constraint.shape[1]):
+            B_i = base * W[i,:]
+            B_blocks.append(B_i)
+        B = np.vstack(B_blocks)
 
         # solving min_c (1/2) c.T [2(A.T A + alpha D)] c + (-2 A.T y).T c
         # https://pypi.org/project/qpsolvers/
         self.coef_ = solve_qp(
                 2 * (A_centered.T @ A_centered + self.alpha * D),
                 -2 * A_centered.T @ y_centered,
-                B,
-                0,
+                -B,
+                np.zeros(B.shape[0]),
                 solver="auto"
         )
+
+        if self.coef_ is None:
+            raise RuntimeError("QP solver failed or monotonicity constraints are infeasible.")
 
         # q_hat = A*c + b => b = q_hat - A*c
         self.intercept_ = y_mean - A_mean @ self.coef_
@@ -229,13 +242,11 @@ class ConstrainedRFFModel():
         
         W = self.feature_map.random_weights_ # shape (n_features, n_components)
         offset = self.feature_map.random_offset_ # shape n_components, )
-
         c = self.coef_
 
         sin_input = X @ W + offset
         scalar = -np.sqrt(2/self.n_components) * c
-        scalar_sine = scalar * np.sin(sin_input)
-        dq_dX = scalar_sine @ W.T
+        dq_dX = (scalar * np.sin(sin_input)) @ W.T
         
         return dq_dX
 
