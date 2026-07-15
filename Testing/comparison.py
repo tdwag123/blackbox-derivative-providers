@@ -325,6 +325,7 @@ if __name__ == "__main__":
     'LinRegRFF'
     'RFF'
     'RFF_flexible'
+    'RFF_constrained'
     'MaternGPMonotone'
 
     Datasets:
@@ -348,6 +349,7 @@ if __name__ == "__main__":
         "FiniteDiff",
         "rff",
         "rff_flexible",
+        "rff_constrained",
         "cubicspline",
         "pchip",
         "smooth+pchip",
