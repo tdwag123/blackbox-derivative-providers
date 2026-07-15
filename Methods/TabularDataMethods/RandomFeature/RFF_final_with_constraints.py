@@ -3,10 +3,12 @@ Random Fourier Features general framework for toggling regularization.
 REGULARIZED LEAST-SQUARES PROBLEM SUBJECT TO MONOTONICITY CONSTRAINTS.
 NOTE: WORK IN PROGRESS
 
-Note: constrained least squares problem can be equivalently framed as quadratic programming problem.
+Note: constrained least squares problem can be equivalently formulated as quadratic programming problem.
+    We will solve this problem as a QP.
 
 Conceptually our optimization becomes
         min_c ||Ac - y||_2^2 + alpha sum ||omega_k||_2^p |c_k|^2
+    =>  min_c (Ac - y)^T (Ac - y) + alpha sum ||omega_k||_2^p |c_k|^2
 
         subject to:
             dq/ds >= 0 at chosen points
@@ -15,7 +17,7 @@ Conceptually our optimization becomes
 
 Regularization options:
     - No regularization (linear regression); alpha = 0. WARNING: RFF with no regularization can overfit!
-    - Regularization=True.  
+    - Regularization=True; alpha != 0.  
         ---- Tikhonov regularization ----
         If p=0, then ridge regression.
 
