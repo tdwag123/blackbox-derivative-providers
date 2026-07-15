@@ -8,12 +8,14 @@ Note: constrained least squares problem can be equivalently formulated as quadra
 
 Conceptually our optimization becomes
         min_c ||Ac - y||_2^2 + alpha sum ||omega_k||_2^p |c_k|^2
-    =>  min_c (Ac - y)^T (Ac - y) + alpha sum ||omega_k||_2^p |c_k|^2
-
         subject to:
             dq/ds >= 0 at chosen points
             dq/dT >= 0 at chosen points
 
+    =>  min_c (1/2) c.T Q c + (-2A.Ty).Tc   where Q = 2(A.TA+alphaD)
+        subject to:
+            -Bc <= 0 where B is the derivative coefficient matrix of shape (2M, n_components)
+            note: M is the number of points at which we enforce monotonicity
 
 Regularization options:
     - No regularization (linear regression); alpha = 0. WARNING: RFF with no regularization can overfit!
@@ -25,17 +27,16 @@ Regularization options:
         If p=1, penalty grows linearly with frequency length.
         If p=2, penalty grows quadratically with frequency length. 
         If p>2, high-frequency features are punished very strongly.
-
-
 """
 
 import numpy as np
 from sklearn.kernel_approximation import RBFSampler
+from qpsolvers import solve_qp
 
-class FlexRFFDerivativeProviderST():
+class ConstrainedRFFDerivativeProviderST():
     def __init__(self, s_data, T_data, q_data, **kwargs):
         X = np.column_stack([s_data, T_data])
-        self.model = FlexRFFModel(**kwargs)
+        self.model = ConstrainedRFFModel(**kwargs)
         self.model.fit(X, q_data)
 
     def evaluate(self, s_q, T_q):
@@ -58,8 +59,10 @@ class FlexRFFDerivativeProviderST():
 none: min_c ||Ac - y||^2
 ridge: min_c ||Ac - y||^2 + alpha sum |c_k|^2
 frequency_weighted: min_c ||Ac - y||_2^2 + alpha sum ||omega_k||_2^p |c_k|^2
+
+=> min_c (1/2) c.T [2(A.T A + alpha D)] c + (-2 A.T y).T c
 """
-class FlexRFFModel():
+class ConstrainedRFFModel():
     def __init__(self, alpha=1e-6, freq_weight=2, n_components=400, 
             gamma=0.1, random_state=None, fit_intercept=True
         ):
@@ -88,14 +91,6 @@ class FlexRFFModel():
             fit_intercept: whether the model learns a constant offset term.
                 if True, q_hat = A*c + b. if False, q_hat = A*c.
                 default is True because target q may not be centered around 0.
-
-            tol: tolerance for solver, controls when iterative solver decides it has converged.
-                if small, more precise solve but possibly slower. if large, less precise but faster.
-
-            max_iter: max # of iterations for iterative ridge solvers. if None, then sklearn can choose.
-
-            solver: which numerical method is used in Ridge. if "auto", sklearn can choose.
-                other possible options: "svd", "cholesky", "lsqr", "sag"/"saga"
         """
 
         if freq_weight < 0:
@@ -131,8 +126,8 @@ class FlexRFFModel():
         # if y.ndim=0, scalar. if 1, vector. if 2, matrix. etc. y.shape[1] returns # of columns in y.
         if y.ndim > 1 and y.shape[1] > 1:
             raise ValueError(f"y has shape {y.shape}, which looks like {y.shape[1]} targets. "
-            "FlexRFFModel.predict_dq_dX only supports single-output regression. "
-            "Fit a separate FlexRFFModel per output column instead."
+            "ConstrainedRFFModel.predict_dq_dX only supports single-output regression. "
+            "Fit a separate ConstrainedRFFModel per output column instead."
         )
 
         y = y.ravel()   # turns into (N,)
@@ -146,9 +141,9 @@ class FlexRFFModel():
         # 3) Create penalty matrix that penalizes high-frequency feature coefficients more.
 
         """
-        Recall: min_c ||Ac - y||_2^2 + alpha sum ||omega_k||_2^p |c_k|^2
-            taking the derivative wrt c: 2A.T(Ac - y) + 2 alpha*D*c
-            setting to zero: (A.T*A + alpha*D)c = A.T*y => c = (A.T*A+alpha*D)^{-1}(A.T*y)
+        Recall: min_c (1/2) c.T [2(A.T A + alpha D)] c + (-2 A.T y).T c
+            taking the derivative wrt c: 2(A.T*A + alpha*D)c + (-2A.T *y)
+            setting to zero: (A.T*A + alpha*D)c = A.T*y => c = (A.T*A + alpha*D)^{-1}(A.T*y)
         """
 
         omega = self.feature_map.random_weights_    # stores each feature's random frequency vector (each column is 1 random freq. vector)
@@ -170,14 +165,34 @@ class FlexRFFModel():
         A_centered = A - A_mean 
         y_centered = y - y_mean
 
-        # solving c = (A.T*A+alpha*D)^{-1}(A.T*y)
-        if self.alpha == 0:
-            self.coef_ = np.linalg.lstsq(A_centered, y_centered, rcond=None)[0] # solve least squares, keep only learned coefficients
-        else:
-            self.coef_ = np.linalg.solve(
-                A_centered.T @ A_centered + self.alpha * D,
-                A_centered.T @ y_centered
-            )
+        """
+        We need to build the derivative coefficient matrix B for phi(x) to enforce monotonicity constraints.
+
+        First, X_constraint = the points on which we want to enforce these constraints on.
+            For now, we set X_constraint = X (enforcing on training points only). Need to change this later.
+
+        in RBFSampler, mapping function is phi(x):
+            phi(x) = sqrt(2/n_components) cos(W^T x + offset)  where W is random_weights_ and offset is random_offset_
+        A is made by applying this mapping function to every training/input point.
+
+        regression model predicts q_hat = A*c + b where c = coef_ and b = intercept_ 
+        this means that q_hat_i = phi(x_i)^T c + b  => q_hat(x) = phi(x)^T c + b
+        => grad_x(q_hat) = c^T * grad_x(phi(x))
+        => grad_x(q_hat) = c^T * -sqrt(2/n_components) sin(W^T x + offset) * W^T
+        """
+
+        X_constraint = X
+        B = 0
+
+        # solving min_c (1/2) c.T [2(A.T A + alpha D)] c + (-2 A.T y).T c
+        # https://pypi.org/project/qpsolvers/
+        self.coef_ = solve_qp(
+                2 * (A_centered.T @ A_centered + self.alpha * D),
+                -2 * A_centered.T @ y_centered,
+                B,
+                0,
+                solver="auto"
+        )
 
         # q_hat = A*c + b => b = q_hat - A*c
         self.intercept_ = y_mean - A_mean @ self.coef_
@@ -191,7 +206,7 @@ class FlexRFFModel():
         """
 
         if self.coef_ is None:
-            raise RuntimeError("FlexRFFModel must be fit before prediction.")
+            raise RuntimeError("ConstrainedRFFModel must be fit before prediction.")
         
         A = self.feature_map.transform(X) # apply approximate feature map to input
         return A @ self.coef_ + self.intercept_ # predict using linear model, q_hat = A*c + b
@@ -210,7 +225,7 @@ class FlexRFFModel():
         """
 
         if self.coef_ is None:
-            raise RuntimeError("FlexRFFModel must be fit before prediction.")
+            raise RuntimeError("ConstrainedRFFModel must be fit before prediction.")
         
         W = self.feature_map.random_weights_ # shape (n_features, n_components)
         offset = self.feature_map.random_offset_ # shape n_components, )

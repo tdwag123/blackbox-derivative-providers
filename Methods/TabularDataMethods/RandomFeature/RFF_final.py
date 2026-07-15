@@ -73,14 +73,6 @@ class FlexRFFModel():
             fit_intercept: whether the model learns a constant offset term.
                 if True, q_hat = A*c + b. if False, q_hat = A*c.
                 default is True because target q may not be centered around 0.
-
-            tol: tolerance for solver, controls when iterative solver decides it has converged.
-                if small, more precise solve but possibly slower. if large, less precise but faster.
-
-            max_iter: max # of iterations for iterative ridge solvers. if None, then sklearn can choose.
-
-            solver: which numerical method is used in Ridge. if "auto", sklearn can choose.
-                other possible options: "svd", "cholesky", "lsqr", "sag"/"saga"
         """
 
         if freq_weight < 0:
