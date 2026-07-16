@@ -181,7 +181,7 @@ class ConstrainedRFFModel():
         => grad_x(q_hat) = c^T * -sqrt(2/n_components) sin(W^T x + offset) * W^T
         """
 
-        X_constraint = X
+        X_constraint = X[:100]
         W = self.feature_map.random_weights_ # shape (n_features, n_components)
         offset = self.feature_map.random_offset_ # shape n_components, )
 
@@ -194,10 +194,12 @@ class ConstrainedRFFModel():
             B_blocks.append(B_i)
         B = np.vstack(B_blocks)
 
+        Q = 2 * (A_centered.T @ A_centered + self.alpha * D)
+        Q = 0.5 * (Q + Q.T)
         # solving min_c (1/2) c.T [2(A.T A + alpha D)] c + (-2 A.T y).T c
         # https://pypi.org/project/qpsolvers/
         self.coef_ = solve_qp(
-                2 * (A_centered.T @ A_centered + self.alpha * D),
+                Q,
                 -2 * A_centered.T @ y_centered,
                 -B,
                 np.zeros(B.shape[0]),

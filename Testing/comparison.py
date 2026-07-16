@@ -346,7 +346,7 @@ if __name__ == "__main__":
         "+reg=gradient:0.3",
     ]
     regularized_methods = [
-        "FiniteDiff",
+        #"FiniteDiff",
         "rff",
         "rff_flexible",
         "rff_constrained",
