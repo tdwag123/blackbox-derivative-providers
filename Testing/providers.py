@@ -532,27 +532,6 @@ def build_provider(method, df, training_df):
         flux_law = unscaled_flux(provider)
 
     # ADD MORE METHODS/MODELS HERE
-    elif method_key in {"monotoneGPKP", "monotoneGPKPEP"}:
-        
-        provider = MonotoneGPKPFluxST(
-            training_frame,
-            s_column="s",
-            temperature_column="T",
-            q_column="q_noisy",
-            noise_column="sigma",
-            learn_neg_flux=True,
-            nu=2.5,
-            lengthscale=1.0,
-            variance=1.0,
-            n_virtual_per_axis=15,
-            ep_max_iter=50,
-            ep_damping=0.7,
-            ep_tol=1.0e-5,
-            use_tikhonov=True,
-            tikhonov_strength=1.0e-2,
-            tikhonov_target="joint",
-            verbose=True,
-        )
 
     else:
         raise ValueError(f"unknown method: {method}")
