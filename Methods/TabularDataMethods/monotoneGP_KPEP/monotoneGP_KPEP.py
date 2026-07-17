@@ -2120,7 +2120,7 @@ def _grid_column(
     return values
 
 
-class MonotoneGPFluxST:
+class MonotoneGPKPFluxST:
     """
     physical-unit flux provider backed by a monotone kernel-packet GP
 
@@ -2342,7 +2342,7 @@ class MonotoneGPFluxST:
         training_csv: str | Path | pd.DataFrame,
         *,
         noise_std: float | np.ndarray | None = None,
-    ) -> "MonotoneGPFluxST":
+    ) -> "MonotoneGPKPFluxST":
         """
         fit the complete provider from one labeled Cartesian CSV table.
 
@@ -2473,7 +2473,7 @@ class MonotoneGPFluxST:
             or self.temperature_scaler_ is None
             or self.y_scaler_ is None
         ):
-            raise RuntimeError("MonotoneGPFluxST must be fit before evaluate()")
+            raise RuntimeError("MonotoneGPKPFluxST must be fit before evaluate()")
         return (
             self.model_,
             self.s_scaler_,
@@ -2570,7 +2570,7 @@ class MonotoneGPFluxST:
         }
 
 __all__ = [
-    "MonotoneGPFluxST",
+    "MonotoneGPKPFluxST",
     "MonotoneKernelPacketGP",
     "MaternHalfInteger1D",
     "KernelPacketFactorization1D",
@@ -2696,7 +2696,7 @@ def main(csv_path: str | Path, grid_size: int = 15) -> None:
     print(f"Training from: {csv_path}")
     print(f"Kernel-packet training grid: {grid_size} x {grid_size}")
 
-    provider = MonotoneGPFluxST(
+    provider = MonotoneGPKPFluxST(
         training_frame,
         s_column="s",
         temperature_column="T",
