@@ -516,7 +516,7 @@ def build_provider(method, df, training_df):
             learn_neg_flux=True,
             n_virtual_per_axis=10,
             probit_nu=1e-3,
-            ep_max_iter=20,
+            ep_max_iter=80,
             ep_damping=0.7,
             ep_tol=1e-5,
             n_restarts_optimizer=0,
