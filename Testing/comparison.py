@@ -347,21 +347,23 @@ if __name__ == "__main__":
     ]
     regularized_methods = [
         #"FiniteDiff",
-        "rff",
-        "rff_flexible",
-        "rff_constrained",
-        "cubicspline",
-        "pchip",
-        "smooth+pchip",
-        "rbf",
-        "FDMatern52",
-        "FDIntegratedEpanechnikov",
-        "savgol",
+        #"rff",
+        "rff_flexible+alpha:1e-6, p=2, n_components=2000",
+        "rff_flexible+alpha:1e-6, p=4, n_components=2000",
+        "rff_constrained, alpha=1e-6, p=2, n_components=2000, osqp",
+        "rff_constrained, alpha=1e-6, p=4, n_components=2000, osqp",
+        #"cubicspline",
+        #"pchip",
+        #"smooth+pchip",
+        #"rbf",
+        #"FDMatern52",
+        #"FDIntegratedEpanechnikov",
+        #"savgol",
     ]
     dependency_check_methods = [
-        "kissgp",
-        "mlp",
-        "maternGPMonotone_regularized",
+        #"kissgp",
+        #"mlp",
+        #"maternGPMonotone_regularized",
     ]
     methods = [
         method + regularization

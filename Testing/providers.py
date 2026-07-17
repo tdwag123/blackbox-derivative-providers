@@ -415,7 +415,7 @@ def build_provider(method, df, training_df):
 
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
-    elif method_key == "rff_flexible":
+    elif method_key == "rff_flexible+alpha:1e-6, p=2, n_components=2000":
         """
         alpha: regularization strength.
             if larger, smoother model + less overfitting + more possible underfitting. 
@@ -441,14 +441,55 @@ def build_provider(method, df, training_df):
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
 
-    elif method_key == "rff_constrained":
+    elif method_key == "rff_flexible+alpha:1e-6, p=4, n_components=2000":
+        """
+        alpha: regularization strength.
+            if larger, smoother model + less overfitting + more possible underfitting. 
+            if smaller, more flexible model but more risk of fitting noise.
+            if 0, no regularization (=> LINEAR REGRESSION), regardless of p.
+        freq_weight: frequency weighting, p.
+            if p=0, no frequency weighting (=> RIDGE REGRESSION).
+            if p=1: penalty grows linearly with frequency length.
+            if p=2: penalty grows quadratically with frequency length.
+            if p>2: high-frequency features are punished very strongly.
+        """
+        provider = FlexRFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            alpha=1e-6,
+            freq_weight=4,
+            n_components=2000,
+            gamma=1.0,
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+    elif method_key == "rff_constrained, alpha=1e-6, p=2, n_components=2000, osqp":
         provider = ConstrainedRFFDerivativeProviderST(
             s_hat_data,
             T_hat_data,
             q_noisy_data,
+            alpha=1e-6,
+            freq_weight=2,
             n_components=2000,
             gamma=1.0,
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+
+    elif method_key == "rff_constrained, alpha=1e-6, p=4, n_components=2000, osqp":
+        provider = ConstrainedRFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
             alpha=1e-6,
+            freq_weight=4,
+            n_components=2000,
+            gamma=1.0,
             random_state=0,
         )
 
