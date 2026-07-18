@@ -527,8 +527,8 @@ def build_provider(method, df, training_df):
             lengthscale_bounds=(0.05, 100.0),
             n_restarts_optimizer=0,
 
-            # Newton should normally remain inside the training domain.
-            allow_extrapolation=False,
+            # Newton should normally remain inside the training domain; for now we let it be true
+            allow_extrapolation=True,
         )
 
         # The provider receives physical s and T and returns physical
