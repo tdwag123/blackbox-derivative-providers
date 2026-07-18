@@ -70,21 +70,7 @@ except (ImportError, OSError):
     ConstrainedRFFDerivativeProviderST = None
 
 try:
-    monotone_gp_path = (
-        ROOT
-        / "Methods"
-        / "TabularDataMethods"
-        / "MaternGP+Monotonicity"
-        / "maternGPMonotoneRegUpdated.py"
-    )
-    monotone_gp_spec = importlib.util.spec_from_file_location(
-        "maternGPMonotoneRegUpdated",
-        monotone_gp_path,
-    )
-    monotone_gp_module = importlib.util.module_from_spec(monotone_gp_spec)
-    sys.modules[monotone_gp_spec.name] = monotone_gp_module
-    monotone_gp_spec.loader.exec_module(monotone_gp_module)
-    MonotoneGPFluxST = monotone_gp_module.MonotoneGPFluxST
+    from Methods.TabularDataMethods.MaternGPMonotonicity.maternGPMonotone import MonotoneGPFluxST
 except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
 
@@ -499,36 +485,54 @@ def build_provider(method, df, training_df):
 
     elif method_key in {"materngpmonotone", "materngpmonotone_unregularized", "materngpmonotone_regularized"}:
         if MonotoneGPFluxST is None:
-            raise ImportError("maternGPMonotone requires GP dependencies")
+            raise ImportError("maternGPMonotone requires NumPy, SciPy, and scikit-learn")
+        
+        regularized = (method_key == "materngpmonotone_regularized")
 
-        noise_std = (
-            training_df["sigma"].to_numpy(dtype=float)
-            if "sigma" in training_df.columns
-            else None
-        )
-        use_internal_tikhonov = method_key == "materngpmonotone_regularized"
-
+        relative_sigma = training_df["sigma"].to_numpy(dtype=float)
+        noise_std = (relative_sigma * np.maximum(1.0, np.abs(q_noisy_data)))
         provider = MonotoneGPFluxST(
-            s_data,
-            T_data,
-            q_noisy_data,
+            s_train=s_data,
+            T_train=T_data,
+            q_train=q_noisy_data,
             noise_std=noise_std,
             learn_neg_flux=True,
-            n_virtual_per_axis=10,
-            probit_nu=1e-3,
-            ep_max_iter=80,
-            ep_damping=0.7,
+
+            # Initial monotonicity grid: 6 x 6 = 36 points.
+            n_virtual_per_axis=6,
+
+            # Dense grid used to look for remaining sign violations.
+            monotonicity_check_points_per_axis=25,
+
+            # Add virtual points at detected violations and refit.
+            max_virtual_refinements=3,
+            max_virtual_points_per_round=16,
+
+            # Probit approximation to df/ds >= 0.
+            probit_nu=1e-4,
+
+            # EP controls.
+            ep_max_iter=100,
+            ep_damping=0.3,
             ep_tol=1e-5,
+
+            # Separate function and derivative regularization.
+            function_regularization=(1e-5 if regularized else 0.0),
+            derivative_regularization=(1e-3 if regularized else 0.0),
+
+            # Numerical variance floor for exactly zero-noise data.
+            minimum_noise_variance=1e-8,
+
+            # Ordinary-GP hyperparameter fit.
+            lengthscale_bounds=(0.05, 100.0),
             n_restarts_optimizer=0,
-            random_state=42,
-            use_tikhonov=use_internal_tikhonov,
-            tikhonov_strength=1e-2,
-            tikhonov_target="joint",
-            verbose=False,
+
+            # Newton should normally remain inside the training domain.
+            allow_extrapolation=False,
         )
 
-        # MonotoneGPFluxST.evaluate() accepts physical s and T and returns
-        # physical q, dq/ds, and dq/dT, so do not use scaled_flux here.
+        # The provider receives physical s and T and returns physical
+        # q, dq/ds, and dq/dT.
         flux_law = unscaled_flux(provider)
 
     # ADD MORE METHODS/MODELS HERE
