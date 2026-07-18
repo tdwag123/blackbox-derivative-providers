@@ -3,3 +3,4 @@ Results/
 .venv/
 __pycache__/
 *.py[cod]
+.vscode/settings.json
