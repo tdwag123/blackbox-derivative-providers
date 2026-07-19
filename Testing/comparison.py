@@ -374,10 +374,10 @@ if __name__ == "__main__":
 
     dataset_dir = ROOT / "Data" / "NoisyDeterministicOracles" / "datasets"
     dataset_paths = [
-        dataset_dir / "linear_medium_noise.csv",
-        dataset_dir / "linear_no_noise.csv",
-        dataset_dir / "nonlinear_high_noise.csv",
-        dataset_dir / "nonlinear_low_noise.csv",
+        # dataset_dir / "linear_medium_noise.csv",
+        # dataset_dir / "linear_no_noise.csv",
+        # dataset_dir / "nonlinear_high_noise.csv",
+        # dataset_dir / "nonlinear_low_noise.csv",
         dataset_dir / "nonlinear_no_noise.csv",
     ]
 
