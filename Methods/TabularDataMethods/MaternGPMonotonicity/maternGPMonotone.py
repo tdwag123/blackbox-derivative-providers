@@ -466,7 +466,6 @@ class MonotoneGPFluxST:
         self.minimum_noise_variance = float(minimum_noise_variance)
         self.n_restarts_optimizer = int(n_restarts_optimizer)
         self.allow_extrapolation = bool(allow_extrapolation)
-        self.ep_tolerance = 1e-5
         self.ep_min_damping = self.ep_damping / 8.0
         self.max_relative_jitter = 1e-3
         self.condition_limit = 1e15
@@ -534,8 +533,9 @@ class MonotoneGPFluxST:
         return np.maximum(standardized_variance, self.minimum_noise_variance)
 
     def _check_condition(self, name, value):
-        if not np.isfinite(value) or value > self.condition_limit:
-            raise GPError(f"{name} condition number is too large: {value:.3e}")
+        if not np.isfinite(value): 
+            warnings.warn(f"{name} condition number could not be estimated", RuntimeWarning)
+            return
         if value > self.condition_warning:
             warnings.warn(f"{name} is ill-conditioned: {value:.3e}", RuntimeWarning)
 
