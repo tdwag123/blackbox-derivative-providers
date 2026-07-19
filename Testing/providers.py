@@ -190,6 +190,10 @@ def unscaled_flux(provider):
     return flux_law
 
 def build_provider(method, df, training_df):
+
+    provider = None
+    model_regularization_type = ("ridge" if method_options.get("ridge_strength", 0.0) > 0.0 else "none")
+    model_regularization_strength = method_options.get("ridge_strength", 0.0)
     method_key, regularization, method_options = parse_method_spec(method)
     start = time.perf_counter()
 
@@ -488,6 +492,8 @@ def build_provider(method, df, training_df):
             raise ImportError("maternGPMonotone requires NumPy, SciPy, and scikit-learn")
         
         regularized = (method_key == "materngpmonotone_regularized")
+        function_strength = 1e-5 if regularized else 0.0
+        derivative_strength = 1e-3 if regularized else 0.0
 
         relative_sigma = training_df["sigma"].to_numpy(dtype=float)
         noise_std = (relative_sigma * np.maximum(1.0, np.abs(q_noisy_data)))
@@ -517,8 +523,8 @@ def build_provider(method, df, training_df):
             ep_tol=1e-5,
 
             # Separate function and derivative regularization.
-            function_regularization=(1e-5 if regularized else 0.0),
-            derivative_regularization=(1e-3 if regularized else 0.0),
+            function_regularization=function_strength,
+            derivative_regularization=derivative_strength,
 
             # Numerical variance floor for exactly zero-noise data.
             minimum_noise_variance=1e-8,
@@ -530,6 +536,10 @@ def build_provider(method, df, training_df):
             # Newton should normally remain inside the training domain; for now we let it be true
             allow_extrapolation=True,
         )
+
+        if regularized:
+            model_regularization_type = ("function+derivative")
+            model_regularization_strength = (f"function={function_strength:g}; derivative={derivative_strength:g}")
 
         # The provider receives physical s and T and returns physical
         # q, dq/ds, and dq/dT.
@@ -553,9 +563,9 @@ def build_provider(method, df, training_df):
             regularization["strength"] if regularization is not None else 0.0
         ),
         "model_regularization_type": (
-            "ridge" if method_options.get("ridge_strength", 0.0) > 0.0 else "none"
+            model_regularization_type
         ),
-        "model_regularization_strength": method_options.get("ridge_strength", 0.0),
+        "model_regularization_strength": (model_regularization_strength),
         "s_mean": s_mean,
         "s_std": s_std,
         "T_mean": T_mean,
