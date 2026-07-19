@@ -192,7 +192,7 @@ def newton(model, reference_model):
         residual_history = [np.nan]
         num_iterations = np.nan
         err = np.nan
-        status = f"failed: {type(exc).__name__}"
+        status = f"failed: {type(exc).__name__}: {exc}"
 
     elapsed = time.perf_counter() - t0
 
