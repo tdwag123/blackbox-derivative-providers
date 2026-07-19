@@ -336,7 +336,7 @@ if __name__ == "__main__":
     'linear_medium_noise.csv',
     '''
 
-    exp_name = "bello"
+    exp_name = "abeeha"
 
     regularization_options = [
         "",
@@ -348,10 +348,10 @@ if __name__ == "__main__":
     regularized_methods = [
         #"FiniteDiff",
         #"rff",
-        "rff_flexible+alpha:1e-6, p=2, n_components=2000",
-        "rff_flexible+alpha:1e-6, p=4, n_components=2000",
-        "rff_constrained, alpha=1e-6, p=2, n_components=2000, osqp",
-        "rff_constrained, alpha=1e-6, p=4, n_components=2000, osqp",
+        # "rff_flexible+alpha:1e-6, p=2, n_components=2000",
+        # "rff_flexible+alpha:1e-6, p=4, n_components=2000",
+        # "rff_constrained, alpha=1e-6, p=2, n_components=2000, osqp",
+        # "rff_constrained, alpha=1e-6, p=4, n_components=2000, osqp",
         #"cubicspline",
         #"pchip",
         #"smooth+pchip",
@@ -363,8 +363,8 @@ if __name__ == "__main__":
     dependency_check_methods = [
         #"kissgp",
         #"mlp",
-        #"maternGPMonotone_unregularized"
-        #"maternGPMonotone_regularized",
+        "materngpmonotone_unregularized"
+        "materngpmonotone_regularized",
     ]
     methods = [
         method + regularization
