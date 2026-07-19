@@ -363,7 +363,7 @@ if __name__ == "__main__":
     dependency_check_methods = [
         #"kissgp",
         #"mlp",
-        "materngpmonotone_unregularized"
+        "materngpmonotone_unregularized",
         "materngpmonotone_regularized",
     ]
     methods = [
