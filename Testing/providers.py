@@ -192,9 +192,9 @@ def unscaled_flux(provider):
 def build_provider(method, df, training_df):
 
     provider = None
+    method_key, regularization, method_options = parse_method_spec(method)
     model_regularization_type = ("ridge" if method_options.get("ridge_strength", 0.0) > 0.0 else "none")
     model_regularization_strength = method_options.get("ridge_strength", 0.0)
-    method_key, regularization, method_options = parse_method_spec(method)
     start = time.perf_counter()
 
     k0 = float(df["k_0"].iloc[0])
