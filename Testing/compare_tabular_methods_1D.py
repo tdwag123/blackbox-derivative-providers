@@ -16,7 +16,7 @@ sys.path.insert(0, str(TABULAR_DIR))
 
 from Methods.TabularDataMethods.CubicSplines import CubicSplineFluxST
 # from Methods.TabularDataMethods.MonotoneInterpolation import PchipFluxST
-from Methods.TabularDataMethods.RadialBasisFunctions import RBFDerivativeProviderST
+from Methods.TabularDataMethods.KernelMethods import KernelDerivativeProviderST
 from Methods.TabularDataMethods.GaussianProcessesWrap import KISSGPFluxST
 from Methods.TabularDataMethods.RandomFeature.RFF import RFFDerivativeProviderST
 
@@ -611,7 +611,7 @@ def build_methods(df, training_df=None, use_gp=True):
     build_provider(
         "RBF",
         lambda: ScaledProvider(
-            RBFDerivativeProviderST(
+            KernelDerivativeProviderST(
                 s_hat_data,
                 T_hat_data,
                 q_noisy_data,

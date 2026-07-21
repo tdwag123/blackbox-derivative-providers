@@ -27,7 +27,7 @@ from Methods.TabularDataMethods.FDIntegratedEpanechnikov import (
 )
 from Methods.TabularDataMethods.FDMaternSmoothing import TabularFDMaternSmoothST
 from Methods.TabularDataMethods.MonotoneInterpolation import PchipFluxST
-from Methods.TabularDataMethods.RadialBasisFunctions import RBFDerivativeProviderST
+from Methods.TabularDataMethods.KernelMethods import KernelDerivativeProviderST
 try:
     from Methods.TabularDataMethods.GaussianProcessesWrap import KISSGPFluxST
 except (ImportError, OSError):
@@ -101,6 +101,22 @@ def parse_method_spec(method):
             options["ridge_strength"] = float(option_key[6:])
         elif option_key.startswith("ridge:"):
             options["ridge_strength"] = float(option_key[6:])
+        elif option_key.startswith("alpha="):
+            options["ridge_strength"] = float(option_key[6:])
+        elif option_key.startswith("alpha:"):
+            options["ridge_strength"] = float(option_key[6:])
+        elif option_key.startswith("epsilon="):
+            options["epsilon"] = float(option_key[8:])
+        elif option_key.startswith("epsilon:"):
+            options["epsilon"] = float(option_key[8:])
+        elif option_key.startswith("eps="):
+            options["epsilon"] = float(option_key[4:])
+        elif option_key.startswith("eps:"):
+            options["epsilon"] = float(option_key[4:])
+        elif option_key.startswith("length_scale="):
+            options["epsilon"] = float(option_key[13:])
+        elif option_key.startswith("length_scale:"):
+            options["epsilon"] = float(option_key[13:])
         else:
             base_parts.append(option)
 
@@ -196,6 +212,7 @@ def build_provider(method, df, training_df):
     model_regularization_type = ("ridge" if method_options.get("ridge_strength", 0.0) > 0.0 else "none")
     model_regularization_strength = method_options.get("ridge_strength", 0.0)
     start = time.perf_counter()
+    provider = None
 
     k0 = float(df["k_0"].iloc[0])
     alpha = float(df["alpha"].iloc[0])
@@ -267,12 +284,28 @@ def build_provider(method, df, training_df):
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
     elif method_key == "rbf":
-        provider = RBFDerivativeProviderST(
+        method_options.setdefault("epsilon", 2.3)
+        method_options.setdefault("ridge_strength", 1.0e-3)
+        provider = KernelDerivativeProviderST(
             s_hat_data, T_hat_data, q_noisy_data,
             function="gaussian",
-            epsilon=1.1,
-            smooth=1.0,
-            ridge_strength=method_options.get("ridge_strength", 0.0),
+            epsilon=method_options["epsilon"],
+            smooth=0.0,
+            ridge_strength=method_options["ridge_strength"],
+        )
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+    elif method_key in {"matern52_krr", "matern52-krr", "matern_krr", "matern-krr"}:
+        method_options.setdefault("epsilon", 4.8)
+        method_options.setdefault("ridge_strength", 1.0e-4)
+        provider = KernelDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            function="matern52",
+            epsilon=method_options["epsilon"],
+            smooth=0.0,
+            ridge_strength=method_options["ridge_strength"],
         )
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
@@ -289,14 +322,17 @@ def build_provider(method, df, training_df):
         if KISSGPFluxST is None:
             raise ImportError("KISS-GP requires torch/gpytorch dependencies")
 
-        gp_subset = training_df.sample(n=min(250, len(training_df)), random_state=4)
+        rng = np.random.default_rng(4)
+        gp_indices = np.arange(len(q_noisy_data))
+        if len(gp_indices) > 250:
+            gp_indices = rng.choice(gp_indices, size=250, replace=False)
 
         # FIXME: this maybe should use scaled inputs / scaled_flux()?
 
         provider = KISSGPFluxST(
-            gp_subset["s"].to_numpy(),
-            gp_subset["T"].to_numpy(),
-            gp_subset["q_noisy"].to_numpy(),
+            s_data[gp_indices],
+            T_data[gp_indices],
+            q_noisy_data[gp_indices],
             grid_size=16,
             training_iter=20,
             learning_rate=0.08,
@@ -330,7 +366,7 @@ def build_provider(method, df, training_df):
             hidden_layer_sizes=(128, 128, 64, 64, 64, 64),
             scale_inputs=False, 
             num_epochs = 200, 
-            l2_weight=0.0,           # set nonzero for regularization
+            l2_weight=method_options.get("ridge_strength", 0.0),
             monotonicity_weight=0.0, # set nonzero for (closer to) monotone output
             verbose=False)
 
@@ -351,7 +387,7 @@ def build_provider(method, df, training_df):
             q_noisy_data,
             n_components=2000,
             gamma=1.0,
-            alpha=1e-6,
+            alpha=method_options.get("ridge_strength", 1e-6),
             random_state=0,
         )
 
@@ -367,7 +403,7 @@ def build_provider(method, df, training_df):
             q_noisy_data,
             n_components=2000,
             gamma=1.0,
-            alpha=1e-6,
+            alpha=method_options.get("ridge_strength", 1e-6),
             random_state=0,
         )
 
@@ -491,9 +527,14 @@ def build_provider(method, df, training_df):
         if MonotoneGPFluxST is None:
             raise ImportError("maternGPMonotone requires NumPy, SciPy, and scikit-learn")
         
-        regularized = (method_key == "materngpmonotone_regularized")
+        regularized = (
+            method_key == "materngpmonotone_regularized"
+            or method_options.get("ridge_strength", 0.0) > 0.0
+        )
         function_strength = 1e-4 if regularized else 0.0
-        derivative_strength = 1e-2 if regularized else 0.0
+        derivative_strength = (
+            method_options.get("ridge_strength", 1e-2) if regularized else 0.0
+        )
 
         relative_sigma = training_df["sigma"].to_numpy(dtype=float)
         noise_std = (relative_sigma * np.maximum(1.0, np.abs(q_noisy_data)))
@@ -556,10 +597,10 @@ def build_provider(method, df, training_df):
         "build_s": time.perf_counter() - start,
         "h_s": h_s,
         "h_T": h_T,
-        "regularization_type": (
+        "smoothing_type": (
             regularization["type"] if regularization is not None else "none"
         ),
-        "regularization_strength": (
+        "smoothing_strength": (
             regularization["strength"] if regularization is not None else 0.0
         ),
         "model_regularization_type": (
@@ -570,4 +611,5 @@ def build_provider(method, df, training_df):
         "s_std": s_std,
         "T_mean": T_mean,
         "T_std": T_std,
+        "provider": provider,
     }
