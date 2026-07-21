@@ -1,6 +1,34 @@
-# take 2 :D
+# Monotone GP: Using a Matern 5/2 Kernel and Expectation Propagation, 
+# with Adaptive Refinement Steps
 
-from __future__ import annotations
+# Algorithm Roadmap: standardize s, T, g (the latent output) and observation noise
+# variance. build a Matern 5/2 Kernel (with derivatives to build cross covariances), 
+# then use the ordinary GP to get an idea for hyperparameters, use kernel to construct 
+# joint prior with probits for sign constraints; approximate probits with Gaussian sites 
+# through EP. scan a denser grid for negative posterior-mean derivatives, add virtual points
+# where violations are worst, and refit posterior through EP. flux and first derivatives
+# predicted analytically from kernel cross-covariance. predictions and derivatives are 
+# converted back to physical units. 
+
+# component glossary:
+#   _points: validates point matrices for minimium size and finiteness
+#   Matern52.K: computes and returns k(x,x')
+#   Matern52.dK_dx: computes and returns dk/dx_a 
+#   Matern52.dK_dy: computes and returns dk/dx_a' 
+#   Matern52.d2K_dxdy: computes and returns d2k/dx_adx_b
+#   stable_cholesky: stabilized A = LL^{\top} factorization
+#   posterior_from_sites: computes q(u) = N(m, S) in whitened coordinates
+#   make_regularization_precision: builds Lambda_reg (diag matrix with fxn and 
+#                                  deriv-specific reg weights)
+#   _inverse_mills_terms: computes phi(z)/Phi(z) stably
+#   make_virtual_grid: constructs Z
+#   _select_new_virtual_points: selects severe, separated derivative violations
+#   run_ep: performs parallel EP site updates
+#   _fit_constraints: builds K_u and runs EP
+#   _scan_constraints: checks partial of mu_f wrt s on a dense grid
+#   _predict_from_state: computes posterior mean mu_f and derivatives nabla mu_f
+#   fit: runs the full training and monotonicity refinement procedure
+#   evaluate: returns q, dq/ds, and dq/dT
 
 import warnings
 
