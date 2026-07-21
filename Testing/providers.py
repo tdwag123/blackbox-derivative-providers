@@ -492,8 +492,8 @@ def build_provider(method, df, training_df):
             raise ImportError("maternGPMonotone requires NumPy, SciPy, and scikit-learn")
         
         regularized = (method_key == "materngpmonotone_regularized")
-        function_strength = 1e-5 if regularized else 0.0
-        derivative_strength = 1e-3 if regularized else 0.0
+        function_strength = 1e-4 if regularized else 0.0
+        derivative_strength = 1e-2 if regularized else 0.0
 
         relative_sigma = training_df["sigma"].to_numpy(dtype=float)
         noise_std = (relative_sigma * np.maximum(1.0, np.abs(q_noisy_data)))
