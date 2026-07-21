@@ -117,6 +117,14 @@ def parse_method_spec(method):
             options["epsilon"] = float(option_key[13:])
         elif option_key.startswith("length_scale:"):
             options["epsilon"] = float(option_key[13:])
+        elif option_key.startswith("p="):
+            options["freq_weight"] = float(option_key[2:])
+        elif option_key.startswith("p:"):
+            options["freq_weight"] = float(option_key[2:])
+        elif option_key.startswith("freq_weight="):
+            options["freq_weight"] = float(option_key[12:])
+        elif option_key.startswith("freq_weight:"):
+            options["freq_weight"] = float(option_key[12:])
         else:
             base_parts.append(option)
 
@@ -435,7 +443,21 @@ def build_provider(method, df, training_df):
             regularization='ridge',
             n_components=2000,
             gamma=1.0,
-            alpha=1e-6,
+            alpha=method_options.get("ridge_strength", 1e-6),
+            random_state=0,
+        )
+
+        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+
+    elif method_key == "rff_flexible":
+        provider = FlexRFFDerivativeProviderST(
+            s_hat_data,
+            T_hat_data,
+            q_noisy_data,
+            alpha=method_options.get("ridge_strength", 1e-6),
+            freq_weight=method_options.get("freq_weight", 2),
+            n_components=2000,
+            gamma=1.0,
             random_state=0,
         )
 
