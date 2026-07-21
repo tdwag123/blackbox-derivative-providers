@@ -75,7 +75,7 @@ except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
 
 try:
-    from Methods.TabularDataMethods.monotoneGP_KPEP.monotoneGP_KPEP import MonotoneGPKPFluxST
+    from Methods.TabularDataMethods.monotoneGP_KPEP.monotoneGPKPEP_startercode import MonotoneGPKPFluxST
 except (ImportError, OSError):
      MonotoneGPKPFluxST = None 
     
