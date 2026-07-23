@@ -75,7 +75,7 @@ except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
 
 try:
-    from Methods.TabularDataMethods.monotoneGP_KPEP.monotoneGPKPEP_startercode import MonotoneGPKPFluxST
+    from Methods.TabularDataMethods.monotoneGP_KPEP.monotoneGPKPEP import MonotoneGPKPFluxST
 except (ImportError, OSError):
      MonotoneGPKPFluxST = None 
     
@@ -585,6 +585,12 @@ def build_provider(method, df, training_df):
         # The provider receives physical s and T and returns physical
         # q, dq/ds, and dq/dT.
         flux_law = unscaled_flux(provider)
+    
+    elif method_key in {"monotoneGPKPEP", "monotoneGPKPEP_unregularized", "monotoneGPKPEP_regularized"}:
+        if MonotoneGPFluxST is None:
+            raise ImportError("monotoneGPKPEP requires NumPy, and SciPy")
+
+        # NEED TO FINISH THIS LATER!!!
 
     # ADD MORE METHODS/MODELS HERE
 
