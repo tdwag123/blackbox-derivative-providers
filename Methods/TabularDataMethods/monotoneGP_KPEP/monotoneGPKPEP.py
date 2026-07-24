@@ -1,7 +1,6 @@
 import warnings
 from itertools import product
 from math import factorial
-from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.linalg import svd
@@ -11,7 +10,9 @@ from scipy.special import log_ndtr
 
 def half_integer_order(nu):
     nu = float(nu)
-    p = int(round(nu-0.5))
+    p = int(round(nu - 0.5))
+    if p < 0 or not np.isclose(nu, p + 0.5, atol=1.0e-12, rtol=0.0):
+        raise ValueError("nu must be a nonnegative half integer")
     return p
 
 def _matern_coefficients(p):
@@ -19,13 +20,17 @@ def _matern_coefficients(p):
     scale = factorial(p)/factorial(2*p)
     for degree in range(p+1):
         coefficients[degree] = (
-            scale * (2.0**degree) * factorial(2*p - degree)
-            /factorial(p-degree)*factorial(degree)
+            scale
+            * (2.0**degree)
+            * factorial(2*p - degree)
+            / (factorial(p-degree) * factorial(degree))
         )
     return coefficients
 
 def _validate_axis(axis, name):
     axis = np.asarray(axis, dtype=float).reshape(-1)
+    if axis.size == 0 or np.any(~np.isfinite(axis)):
+        raise ValueError(f"{name} must contain finite values")
     if np.any(np.diff(axis) <= 0.0):
         raise ValueError(f"{name} must be strictly increasing")
     return axis
@@ -114,8 +119,26 @@ def _sparse_kron(factors):
 
 def _inverse_mills_ratio(z):
     z = np.asarray(z, dtype=float)
-    log_pdf = -0.5 * z**2 - 0.5 * np.log(2.0 * np.pi)
-    return np.exp(log_pdf - log_ndtr(z))
+    result = np.empty_like(z)
+    tail = z < -10.0
+
+    if np.any(~tail):
+        values = z[~tail]
+        log_pdf = -0.5 * values**2 - 0.5 * np.log(2.0 * np.pi)
+        result[~tail] = np.exp(log_pdf - log_ndtr(values))
+
+    if np.any(tail):
+        values = z[tail]
+        inverse = -1.0 / values
+        correction = (
+            inverse
+            - 2.0 * inverse**3
+            + 10.0 * inverse**5
+            - 74.0 * inverse**7
+        )
+        result[tail] = -values + correction
+
+    return result
 
 
 class MaternHalfInteger1D:
@@ -280,6 +303,14 @@ class KernelPacketFactorization1D:
         matrix.eliminate_zeros()
         return matrix
 
+def _lengthscale_tuple(lengthscale, dimension):
+    values = np.asarray(lengthscale, dtype=float).reshape(-1)
+    if values.size == 1:
+        values = np.full(dimension, float(values[0]))
+    if values.size != dimension or np.any(~np.isfinite(values)) or np.any(values <= 0.0):
+        raise ValueError("invalid lengthscale")
+    return tuple(float(value) for value in values)
+
 
 class ProductKernelPacketBasis:
     def __init__(self, axes, nu=2.5, lengthscale=1.0):
@@ -291,17 +322,17 @@ class ProductKernelPacketBasis:
             raise ValueError("at least one axis is required")
         if half_integer_order(nu) < 1:
             raise ValueError("nu must be at least 3/2")
-
+        self.dimension = len(self.axes)
+        self.lengthscales = _lengthscale_tuple(lengthscale, self.dimension)
         self.factorizations = tuple(
-            KernelPacketFactorization1D(axis, nu, lengthscale)
-            for axis in self.axes
+            KernelPacketFactorization1D(axis, nu, axis_lengthscale)
+            for axis, axis_lengthscale in zip(self.axes, self.lengthscales)
         )
         self.coefficient_matrix = _sparse_kron(
             [factor.coefficient_matrix for factor in self.factorizations]
         )
         self.shape = tuple(axis.size for axis in self.axes)
         self.size = int(np.prod(self.shape))
-        self.dimension = len(self.axes)
 
     def _orders(self, derivative_orders):
         if derivative_orders is None:
@@ -398,14 +429,15 @@ class MonotoneKernelPacketGP:
         lengthscale=1.0,
         variance=1.0,
         noise_variance=1.0e-4,
+        observation_mask=None,
         derivative_dim=0,
         monotone_sign=1,
         probit_scale=1.0e-3,
         max_iter=50,
         damping=0.7,
-        tolerance=1.0e-5,
-        ridge_precision=1.0e-8,
-        use_tikhonov=True,
+        tolerance=1.0e-6,
+        ridge_precision=1.0e-10,
+        use_tikhonov=False,
         function_regularization=0.0,
         derivative_regularization=1.0e-2,
         variance_batch_size=32,
@@ -479,6 +511,35 @@ class MonotoneKernelPacketGP:
             self.noise_variance <= 0.0
         ):
             raise ValueError("noise variance must be positive")
+        
+        if observation_mask is None:
+            self.observation_mask = np.ones(self.function_size, dtype=bool)
+        else: 
+            mask = np.asarray(observation_mask, dtype=bool)
+            if mask.shape == self.function_shape: 
+                mask = mask.reshape(-1, order="C")
+            else:
+                mask = mask.reshape(-1)
+            if mask.size != self.function_size or not np.any(mask):
+                raise ValueError("invalid observation mask")
+            self.observation_mask = mask.copy()
+        
+        derivative_kernel = self.derivative_basis.factorizations[
+            self.derivative_dim
+        ].kernel
+        derivative_variance = -float(
+            derivative_kernel.covariance_second_derivative([0.0], [0.0])[0, 0]
+        )
+        self.function_regularization_precision = 0.0
+        self.derivative_regularization_precision = 0.0
+        if self.use_tikhonov:
+            self.function_regularization_precision = (
+                self.function_regularization / self.variance
+            )
+            self.derivative_regularization_precision = (
+                self.derivative_regularization
+                / (self.variance * derivative_variance)
+            )
 
         self.C, self.B = self._joint_factorization()
         self.posterior_packet_weights = None
@@ -489,6 +550,7 @@ class MonotoneKernelPacketGP:
         self.site_eta_derivative = None
         self.converged = False
         self.iterations = 0
+        self.final_site_change = np.inf
 
     def _derivative_orders(self, order, dimension=None):
         orders = [0] * self.dimension
@@ -578,16 +640,20 @@ class MonotoneKernelPacketGP:
         n = self.function_size
         m = self.derivative_size
         total = n + m
-        observation_precision = 1.0 / self.noise_variance
+        observation_precision = np.zeros(n, dtype=float)
+        observation_precision[self.observation_mask] = (
+            1.0 / self.noise_variance[self.observation_mask]
+        )
+
         fixed_precision = np.full(total, self.ridge_precision, dtype=float)
-        if self.use_tikhonov:
-            fixed_precision[:n] += self.function_regularization
-            fixed_precision[n:] += self.derivative_regularization
+        fixed_precision[:n] += self.function_regularization_precision
+        fixed_precision[n:] += self.derivative_regularization_precision
         fixed_precision[:n] += observation_precision
         fixed_eta = np.zeros(total, dtype=float)
         fixed_eta[:n] = observation_precision * y
         site_tau = np.zeros(m, dtype=float)
         site_eta = np.zeros(m, dtype=float)
+        self.converged = False
 
         for iteration in range(1, self.max_iter + 1):
             precision = fixed_precision.copy()
@@ -645,6 +711,7 @@ class MonotoneKernelPacketGP:
             site_tau = updated_tau
             site_eta = updated_eta
             self.iterations = iteration
+            self.final_site_change = float(max_change)
 
             if self.verbose:
                 violations = np.mean(
@@ -658,6 +725,9 @@ class MonotoneKernelPacketGP:
             if max_change < self.tolerance:
                 self.converged = True
                 break
+        
+        if not self.converged:
+            raise RuntimeError(f"EP did not converge; final change = {self.final_site_change:.3e}")
 
         precision = fixed_precision.copy()
         precision[n:] += site_tau
@@ -713,7 +783,7 @@ class MonotoneKernelPacketGP:
             matrix @ self.posterior_packet_weights, dtype=float
         ).reshape(-1)
 
-def _grid_inputs(s_train, T_train, q_train, noise_std):
+def _grid_inputs(s_train, T_train, q_train, noise_std, observation_mask):
     s_array = np.asarray(s_train, dtype=float)
     T_array = np.asarray(T_train, dtype=float)
     q_array = np.asarray(q_train, dtype=float)
@@ -721,11 +791,28 @@ def _grid_inputs(s_train, T_train, q_train, noise_std):
     if q_array.ndim == 2:
         s_axis = _validate_axis(s_array, "s axis")
         T_axis = _validate_axis(T_array, "temperature axis")
+
         if q_array.shape != (s_axis.size, T_axis.size):
             raise ValueError("q_grid shape does not match the coordinate axes")
-        if np.any(~np.isfinite(q_array)):
-            raise ValueError("q_grid must be finite")
+
         q_grid = q_array.copy()
+
+        if observation_mask is None:
+            mask_grid = np.isfinite(q_grid)
+        else:
+            mask_grid = np.asarray(observation_mask, dtype=bool)
+            if mask_grid.shape != q_grid.shape:
+                if mask_grid.size == q_grid.size:
+                    mask_grid = mask_grid.reshape(q_grid.shape, order="C")
+                else:
+                    raise ValueError("observation_mask does not match q_grid")
+            mask_grid &= np.isfinite(q_grid)
+
+        if not np.any(mask_grid):
+            raise ValueError("observation_mask contains no finite observations")
+
+        fill_value = float(np.mean(q_grid[mask_grid]))
+        q_grid[~np.isfinite(q_grid)] = fill_value
 
         if noise_std is None:
             sigma_grid = None
@@ -739,11 +826,20 @@ def _grid_inputs(s_train, T_train, q_train, noise_std):
                 sigma_grid = sigma.reshape(q_grid.shape, order="C").copy()
             else:
                 raise ValueError("noise_std does not match q_grid")
-        return s_axis, T_axis, q_grid, sigma_grid
+
+            invalid_observed_noise = mask_grid & (
+                ~np.isfinite(sigma_grid) | (sigma_grid < 0.0)
+            )
+            if np.any(invalid_observed_noise):
+                raise ValueError("observed noise values must be finite and nonnegative")
+            sigma_grid[~mask_grid] = 0.0
+
+        return s_axis, T_axis, q_grid, sigma_grid, mask_grid
 
     s = s_array.reshape(-1)
     T = T_array.reshape(-1)
     q = q_array.reshape(-1)
+
     if not (s.size == T.size == q.size) or s.size == 0:
         raise ValueError("s_train, T_train, and q_train must have equal lengths")
     if np.any(~np.isfinite(s)) or np.any(~np.isfinite(T)) or np.any(~np.isfinite(q)):
@@ -752,23 +848,37 @@ def _grid_inputs(s_train, T_train, q_train, noise_std):
     s_axis = np.unique(s)
     T_axis = np.unique(T)
     grid_size = s_axis.size * T_axis.size
-    if s.size != grid_size:
-        raise ValueError(
-            "kernel packets require a complete Cartesian grid; pass the "
-            "comparison framework's s_grid, T_grid, and q_grid"
-        )
-
     s_index = np.searchsorted(s_axis, s)
     T_index = np.searchsorted(T_axis, T)
     flat_index = s_index * T_axis.size + T_index
+
     if np.unique(flat_index).size != flat_index.size:
         raise ValueError("duplicate Cartesian training points")
 
     q_flat = np.full(grid_size, np.nan)
     q_flat[flat_index] = q
-    if np.any(~np.isfinite(q_flat)):
-        raise ValueError("training data do not fill the Cartesian grid")
     q_grid = q_flat.reshape((s_axis.size, T_axis.size), order="C")
+    finite_grid = np.isfinite(q_grid)
+
+    if observation_mask is None:
+        mask_grid = finite_grid
+    else:
+        supplied_mask = np.asarray(observation_mask, dtype=bool)
+        if supplied_mask.size == q.size:
+            mask_flat = np.zeros(grid_size, dtype=bool)
+            mask_flat[flat_index] = supplied_mask.reshape(-1)
+            mask_grid = mask_flat.reshape(q_grid.shape, order="C")
+        elif supplied_mask.size == grid_size:
+            mask_grid = supplied_mask.reshape(q_grid.shape, order="C")
+        else:
+            raise ValueError("invalid observation_mask")
+        mask_grid &= finite_grid
+
+    if not np.any(mask_grid):
+        raise ValueError("observation_mask contains no finite observations")
+
+    fill_value = float(np.mean(q_grid[mask_grid]))
+    q_grid[~finite_grid] = fill_value
 
     if noise_std is None:
         sigma_grid = None
@@ -780,10 +890,87 @@ def _grid_inputs(s_train, T_train, q_train, noise_std):
             sigma_flat = np.full(grid_size, np.nan)
             sigma_flat[flat_index] = sigma
             sigma_grid = sigma_flat.reshape(q_grid.shape, order="C")
+        elif sigma.size == grid_size:
+            sigma_grid = sigma.reshape(q_grid.shape, order="C").copy()
         else:
             raise ValueError("noise_std must be scalar or match the training rows")
 
-    return s_axis, T_axis, q_grid, sigma_grid
+        invalid_observed_noise = mask_grid & (
+            ~np.isfinite(sigma_grid) | (sigma_grid < 0.0)
+        )
+        if np.any(invalid_observed_noise):
+            raise ValueError("observed noise values must be finite and nonnegative")
+        sigma_grid[~mask_grid] = 0.0
+
+    return s_axis, T_axis, q_grid, sigma_grid, mask_grid
+
+def _dense_product_covariance(axes, lengthscales, nu, variance):
+    factors = []
+    for axis, lengthscale in zip(axes, lengthscales):
+        kernel = MaternHalfInteger1D(nu, lengthscale)
+        factors.append(kernel.covariance(axis, axis))
+    covariance = factors[0]
+    for factor in factors[1:]:
+        covariance = np.kron(covariance, factor)
+    return float(variance) * covariance
+
+
+def _select_lengthscales(
+    axes,
+    y_grid,
+    noise_variance,
+    observation_mask,
+    nu,
+    variance,
+    candidates,
+):
+    candidates = tuple(float(value) for value in candidates)
+    if not candidates or any(
+        not np.isfinite(value) or value <= 0.0 for value in candidates
+    ):
+        raise ValueError("invalid lengthscale candidates")
+
+    y = np.asarray(y_grid, dtype=float).reshape(-1, order="C")
+    noise = np.asarray(noise_variance, dtype=float).reshape(-1, order="C")
+    observed = np.flatnonzero(
+        np.asarray(observation_mask, dtype=bool).reshape(-1, order="C")
+    )
+    if observed.size < 4:
+        return (1.0,) * len(axes)
+
+    validation = observed[::5]
+    training = np.setdiff1d(observed, validation, assume_unique=True)
+    if validation.size == 0 or training.size < 3:
+        validation = observed[-max(1, observed.size // 5):]
+        training = np.setdiff1d(observed, validation, assume_unique=True)
+
+    best_score = np.inf
+    best = None
+    for values in product(candidates, repeat=len(axes)):
+        covariance = _dense_product_covariance(axes, values, nu, variance)
+        K_train = covariance[np.ix_(training, training)]
+        K_train = K_train + np.diag(noise[training])
+        scale = max(float(np.max(np.diag(K_train))), 1.0)
+        solved = False
+        for jitter in (0.0, 1.0e-12 * scale, 1.0e-10 * scale, 1.0e-8 * scale):
+            try:
+                L = np.linalg.cholesky(K_train + jitter * np.eye(training.size))
+                alpha = np.linalg.solve(L.T, np.linalg.solve(L, y[training]))
+                solved = True
+                break
+            except np.linalg.LinAlgError:
+                continue
+        if not solved:
+            continue
+        prediction = covariance[np.ix_(validation, training)] @ alpha
+        score = float(np.sqrt(np.mean((prediction - y[validation]) ** 2)))
+        if score < best_score:
+            best_score = score
+            best = tuple(values)
+
+    if best is None:
+        raise RuntimeError("lengthscale search failed")
+    return best
 
 class MonotoneGPKPFluxST:
     def __init__(
@@ -792,26 +979,31 @@ class MonotoneGPKPFluxST:
         T_train,
         q_train,
         noise_std=None,
+        observation_mask=None,
+        noise_is_relative=True,
         learn_neg_flux=True,
         nu=2.5,
-        lengthscale=1.0,
+        lengthscale="auto",
+        lengthscale_candidates=(0.25, 0.5, 1.0, 2.0, 4.0),
         variance=1.0,
-        n_virtual_per_axis=10,
-        probit_nu=1.0e-6,
-        ep_max_iter=50,
-        ep_damping=0.7,
-        ep_tol=1.0e-5,
+        n_virtual_per_axis=7,
+        probit_nu=5.0e-2,
+        ep_max_iter=100,
+        ep_damping=0.4,
+        ep_tol=1.0e-6,
         jitter=1.0e-10,
-        use_tikhonov=True,
-        function_regularization=1.0e-4,
-        derivative_regularization=1.0e-2,
+        use_tikhonov=False,
+        function_regularization=0.0,
+        derivative_regularization=0.0,
         variance_batch_size=32,
         prediction_batch_size=4096,
         verbose=False,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
+        self.noise_is_relative = bool(noise_is_relative)
         self.nu = float(nu)
-        self.lengthscale = float(lengthscale)
+        self.lengthscale = lengthscale
+        self.lengthscale_candidates = tuple(lengthscale_candidates)
         self.variance = float(variance)
         self.n_virtual_per_axis = int(n_virtual_per_axis)
         self.probit_nu = float(probit_nu)
@@ -826,15 +1018,20 @@ class MonotoneGPKPFluxST:
         self.prediction_batch_size = int(prediction_batch_size)
         self.verbose = bool(verbose)
         self.model = None
+        self.selected_lengthscales = None
+        self.ep_damping_used = None
         self._validate_configuration()
-        self.fit(s_train, T_train, q_train, noise_std)
+        self.fit(s_train, T_train, q_train, noise_std, observation_mask)
 
     def _validate_configuration(self):
         order = half_integer_order(self.nu)
         if order < 1:
             raise ValueError("nu must be at least 3/2")
-        if not np.isfinite(self.lengthscale) or self.lengthscale <= 0.0:
-            raise ValueError("lengthscale must be positive")
+        if isinstance(self.lengthscale, str):
+            if self.lengthscale != "auto":
+                raise ValueError("lengthscale must be positive or 'auto'")
+        else:
+            _lengthscale_tuple(self.lengthscale, 2)
         if not np.isfinite(self.variance) or self.variance <= 0.0:
             raise ValueError("variance must be positive")
         if self.n_virtual_per_axis < 2 * order + 3:
@@ -855,17 +1052,48 @@ class MonotoneGPKPFluxST:
             )
         ):
             raise ValueError("regularization must be nonnegative")
-
     def _noise_variance(self, sigma_grid):
         if sigma_grid is None:
-            return np.full(self.q_grid.shape, 1.0e-6)
-        if np.any(~np.isfinite(sigma_grid)) or np.any(sigma_grid < 0.0):
-            raise ValueError("noise_std must be finite and nonnegative")
-        return np.maximum((sigma_grid / self.y_scale) ** 2, 1.0e-12)
+            absolute_sigma = np.zeros(self.q_grid.shape, dtype=float)
+        else:
+            sigma_grid = np.asarray(sigma_grid, dtype=float)
+            if np.any(~np.isfinite(sigma_grid)) or np.any(sigma_grid < 0.0):
+                raise ValueError("noise_std must be finite and nonnegative")
+            absolute_sigma = sigma_grid.copy()
+            if self.noise_is_relative:
+                absolute_sigma *= np.maximum(1.0, np.abs(self.q_grid))
+        return np.maximum((absolute_sigma / self.y_scale) ** 2, 1.0e-10)
 
-    def fit(self, s_train, T_train, q_train, noise_std=None):
-        s_axis, T_axis, q_grid, sigma_grid = _grid_inputs(
-            s_train, T_train, q_train, noise_std
+    def _fit_model(self, function_axes, derivative_axes, y, noise, mask, damping):
+        return MonotoneKernelPacketGP(
+            function_axes,
+            derivative_axes,
+            self.nu,
+            self.selected_lengthscales,
+            self.variance,
+            noise,
+            mask,
+            0,
+            1 if self.learn_neg_flux else -1,
+            self.probit_nu,
+            self.ep_max_iter,
+            damping,
+            self.ep_tol,
+            self.jitter,
+            self.use_tikhonov,
+            self.function_regularization,
+            self.derivative_regularization,
+            self.variance_batch_size,
+            self.verbose,
+        ).fit(y)
+
+    def fit(self, s_train, T_train, q_train, noise_std=None, observation_mask=None):
+        s_axis, T_axis, q_grid, sigma_grid, mask_grid = _grid_inputs(
+            s_train,
+            T_train,
+            q_train,
+            noise_std,
+            observation_mask,
         )
 
         minimum = 2 * half_integer_order(self.nu) + 3
@@ -876,12 +1104,14 @@ class MonotoneGPKPFluxST:
         self.s_axis = s_axis.copy()
         self.T_axis = T_axis.copy()
         self.q_grid = q_grid.copy()
+        self.observation_mask = mask_grid.copy()
         self.s_mean = float(np.mean(s_axis))
         self.s_scale = float(np.std(s_axis))
         self.T_mean = float(np.mean(T_axis))
         self.T_scale = float(np.std(T_axis))
-        self.y_mean = float(np.mean(latent_grid))
-        self.y_scale = float(np.std(latent_grid))
+        observed_latent = latent_grid[mask_grid]
+        self.y_mean = float(np.mean(observed_latent))
+        self.y_scale = float(np.std(observed_latent))
 
         for scale in (self.s_scale, self.T_scale, self.y_scale):
             if not np.isfinite(scale) or scale <= np.finfo(float).eps:
@@ -892,33 +1122,48 @@ class MonotoneGPKPFluxST:
         y_standardized = (latent_grid - self.y_mean) / self.y_scale
         noise_variance = self._noise_variance(sigma_grid)
 
+        if self.lengthscale == "auto":
+            self.selected_lengthscales = _select_lengthscales(
+                (s_standardized, T_standardized),
+                y_standardized,
+                noise_variance,
+                mask_grid,
+                self.nu,
+                self.variance,
+                self.lengthscale_candidates,
+            )
+        else:
+            self.selected_lengthscales = _lengthscale_tuple(self.lengthscale, 2)
+
         s_virtual = np.linspace(s_axis[0], s_axis[-1], self.n_virtual_per_axis)
         T_virtual = np.linspace(T_axis[0], T_axis[-1], self.n_virtual_per_axis)
         s_virtual = (s_virtual - self.s_mean) / self.s_scale
         T_virtual = (T_virtual - self.T_mean) / self.T_scale
 
-        monotone_sign = 1 if self.learn_neg_flux else -1
-        self.model = MonotoneKernelPacketGP(
-            (s_standardized, T_standardized),
-            (s_virtual, T_virtual),
-            self.nu,
-            self.lengthscale,
-            self.variance,
-            noise_variance,
-            0,
-            monotone_sign,
-            self.probit_nu,
-            self.ep_max_iter,
-            self.ep_damping,
-            self.ep_tol,
-            self.jitter,
-            self.use_tikhonov,
-            self.function_regularization,
-            self.derivative_regularization,
-            self.variance_batch_size,
-            self.verbose,
-        ).fit(y_standardized)
-        return self
+        failures = []
+        damping_values = []
+        damping = self.ep_damping
+        while damping >= max(0.05, self.ep_damping / 8.0):
+            if not any(np.isclose(damping, value) for value in damping_values):
+                damping_values.append(damping)
+            damping *= 0.5
+
+        for damping in damping_values:
+            try:
+                self.model = self._fit_model(
+                    (s_standardized, T_standardized),
+                    (s_virtual, T_virtual),
+                    y_standardized,
+                    noise_variance,
+                    mask_grid,
+                    damping,
+                )
+                self.ep_damping_used = damping
+                return self
+            except (RuntimeError, np.linalg.LinAlgError) as error:
+                failures.append(str(error))
+
+        raise RuntimeError("EP failed: " + " | ".join(failures))
 
     def evaluate(self, s_q, T_q):
         if self.model is None:
