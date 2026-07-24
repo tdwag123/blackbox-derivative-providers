@@ -31,7 +31,7 @@ def _validate_axis(axis, name):
     return axis
 
 def _equally_spaced(axis):
-    if axis.size < 2:
+    if axis.size < 3:
         return True
     spacing = (axis[-1] - axis[0])/(axis.size - 1)
     scale = max(1.0, abs(axis[0]), abs(axis[-1]), abs(spacing))
@@ -713,77 +713,84 @@ class MonotoneKernelPacketGP:
             matrix @ self.posterior_packet_weights, dtype=float
         ).reshape(-1)
 
+def _grid_inputs(s_train, T_train, q_train, noise_std):
+    s_array = np.asarray(s_train, dtype=float)
+    T_array = np.asarray(T_train, dtype=float)
+    q_array = np.asarray(q_train, dtype=float)
 
-def _load_frame(source):
-    if isinstance(source, pd.DataFrame):
-        return source.copy()
-    path = Path(source).expanduser()
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    return pd.read_csv(path)
+    if q_array.ndim == 2:
+        s_axis = _validate_axis(s_array, "s axis")
+        T_axis = _validate_axis(T_array, "temperature axis")
+        if q_array.shape != (s_axis.size, T_axis.size):
+            raise ValueError("q_grid shape does not match the coordinate axes")
+        if np.any(~np.isfinite(q_array)):
+            raise ValueError("q_grid must be finite")
+        q_grid = q_array.copy()
 
+        if noise_std is None:
+            sigma_grid = None
+        else:
+            sigma = np.asarray(noise_std, dtype=float)
+            if sigma.size == 1:
+                sigma_grid = np.full(q_grid.shape, float(sigma.reshape(-1)[0]))
+            elif sigma.shape == q_grid.shape:
+                sigma_grid = sigma.copy()
+            elif sigma.size == q_grid.size:
+                sigma_grid = sigma.reshape(q_grid.shape, order="C").copy()
+            else:
+                raise ValueError("noise_std does not match q_grid")
+        return s_axis, T_axis, q_grid, sigma_grid
 
-def _numeric_column(frame, column):
-    if column not in frame.columns:
-        raise ValueError(f"missing column {column}")
-    try:
-        values = pd.to_numeric(frame[column], errors="raise").to_numpy(dtype=float)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"invalid column {column}") from error
-    if np.any(~np.isfinite(values)):
-        raise ValueError(f"invalid column {column}")
-    frame[column] = values
+    s = s_array.reshape(-1)
+    T = T_array.reshape(-1)
+    q = q_array.reshape(-1)
+    if not (s.size == T.size == q.size) or s.size == 0:
+        raise ValueError("s_train, T_train, and q_train must have equal lengths")
+    if np.any(~np.isfinite(s)) or np.any(~np.isfinite(T)) or np.any(~np.isfinite(q)):
+        raise ValueError("training data must be finite")
 
-
-def _cartesian_axes(frame, s_column, temperature_column):
-    if frame.duplicated([s_column, temperature_column]).any():
-        raise ValueError("duplicate grid points")
-    s_axis = np.sort(frame[s_column].unique().astype(float))
-    temperature_axis = np.sort(frame[temperature_column].unique().astype(float))
-    if len(frame) != s_axis.size * temperature_axis.size:
-        raise ValueError("training data must form a complete Cartesian grid")
-    occupancy = frame.assign(_present=1).pivot(
-        index=s_column,
-        columns=temperature_column,
-        values="_present",
-    )
-    occupancy = occupancy.reindex(index=s_axis, columns=temperature_axis)
-    if occupancy.isna().any().any():
-        raise ValueError("training data must form a complete Cartesian grid")
-    return s_axis, temperature_axis
-
-
-def _grid_column(
-    frame,
-    column,
-    s_column,
-    temperature_column,
-    s_axis,
-    temperature_axis,
-):
-    _numeric_column(frame, column)
-    values = (
-        frame.pivot(
-            index=s_column,
-            columns=temperature_column,
-            values=column,
+    s_axis = np.unique(s)
+    T_axis = np.unique(T)
+    grid_size = s_axis.size * T_axis.size
+    if s.size != grid_size:
+        raise ValueError(
+            "kernel packets require a complete Cartesian grid; pass the "
+            "comparison framework's s_grid, T_grid, and q_grid"
         )
-        .reindex(index=s_axis, columns=temperature_axis)
-        .to_numpy(dtype=float)
-    )
-    if np.any(~np.isfinite(values)):
-        raise ValueError(f"invalid grid column {column}")
-    return values
 
+    s_index = np.searchsorted(s_axis, s)
+    T_index = np.searchsorted(T_axis, T)
+    flat_index = s_index * T_axis.size + T_index
+    if np.unique(flat_index).size != flat_index.size:
+        raise ValueError("duplicate Cartesian training points")
+
+    q_flat = np.full(grid_size, np.nan)
+    q_flat[flat_index] = q
+    if np.any(~np.isfinite(q_flat)):
+        raise ValueError("training data do not fill the Cartesian grid")
+    q_grid = q_flat.reshape((s_axis.size, T_axis.size), order="C")
+
+    if noise_std is None:
+        sigma_grid = None
+    else:
+        sigma = np.asarray(noise_std, dtype=float).reshape(-1)
+        if sigma.size == 1:
+            sigma_grid = np.full(q_grid.shape, float(sigma[0]))
+        elif sigma.size == q.size:
+            sigma_flat = np.full(grid_size, np.nan)
+            sigma_flat[flat_index] = sigma
+            sigma_grid = sigma_flat.reshape(q_grid.shape, order="C")
+        else:
+            raise ValueError("noise_std must be scalar or match the training rows")
+
+    return s_axis, T_axis, q_grid, sigma_grid
 
 class MonotoneGPKPFluxST:
     def __init__(
         self,
-        training_data,
-        s_column="s",
-        temperature_column="T",
-        q_column="q_noisy",
-        noise_column="sigma",
+        s_train,
+        T_train,
+        q_train,
         noise_std=None,
         learn_neg_flux=True,
         nu=2.5,
@@ -791,7 +798,7 @@ class MonotoneGPKPFluxST:
         variance=1.0,
         n_virtual_per_axis=10,
         probit_nu=1.0e-6,
-        ep_max_iter=20,
+        ep_max_iter=50,
         ep_damping=0.7,
         ep_tol=1.0e-5,
         jitter=1.0e-10,
@@ -802,10 +809,6 @@ class MonotoneGPKPFluxST:
         prediction_batch_size=4096,
         verbose=False,
     ):
-        self.s_column = str(s_column)
-        self.temperature_column = str(temperature_column)
-        self.q_column = str(q_column)
-        self.noise_column = None if noise_column is None else str(noise_column)
         self.learn_neg_flux = bool(learn_neg_flux)
         self.nu = float(nu)
         self.lengthscale = float(lengthscale)
@@ -824,7 +827,7 @@ class MonotoneGPKPFluxST:
         self.verbose = bool(verbose)
         self.model = None
         self._validate_configuration()
-        self.fit(training_data, noise_std)
+        self.fit(s_train, T_train, q_train, noise_std)
 
     def _validate_configuration(self):
         order = half_integer_order(self.nu)
@@ -853,116 +856,51 @@ class MonotoneGPKPFluxST:
         ):
             raise ValueError("regularization must be nonnegative")
 
-    def _noise_grid(
-        self,
-        frame,
-        q_grid,
-        noise_std,
-        s_axis,
-        temperature_axis,
-    ):
-        if noise_std is None:
-            if self.noise_column is not None and self.noise_column in frame.columns:
-                sigma = _grid_column(
-                    frame,
-                    self.noise_column,
-                    self.s_column,
-                    self.temperature_column,
-                    s_axis,
-                    temperature_axis,
-                )
-            else:
-                sigma = None
-        else:
-            noise_std = np.asarray(noise_std, dtype=float)
-            if noise_std.size == 1:
-                sigma = np.full_like(q_grid, float(noise_std.reshape(-1)[0]))
-            elif noise_std.shape == q_grid.shape:
-                sigma = noise_std.copy()
-            elif noise_std.size == len(frame):
-                temporary = frame.copy()
-                temporary["_noise"] = noise_std.reshape(-1)
-                sigma = _grid_column(
-                    temporary,
-                    "_noise",
-                    self.s_column,
-                    self.temperature_column,
-                    s_axis,
-                    temperature_axis,
-                )
-            else:
-                raise ValueError("noise_std has the wrong size")
+    def _noise_variance(self, sigma_grid):
+        if sigma_grid is None:
+            return np.full(self.q_grid.shape, 1.0e-6)
+        if np.any(~np.isfinite(sigma_grid)) or np.any(sigma_grid < 0.0):
+            raise ValueError("noise_std must be finite and nonnegative")
+        return np.maximum((sigma_grid / self.y_scale) ** 2, 1.0e-12)
 
-        if sigma is None:
-            return np.full(q_grid.shape, 1.0e-6)
-        if np.any(~np.isfinite(sigma)) or np.any(sigma < 0.0):
-            raise ValueError("invalid noise standard deviation")
-        return np.maximum((sigma / self.y_scale) ** 2, 1.0e-12)
-
-    def fit(self, training_data, noise_std=None):
-        frame = _load_frame(training_data)
-        _numeric_column(frame, self.s_column)
-        _numeric_column(frame, self.temperature_column)
-        _numeric_column(frame, self.q_column)
-        s_axis, temperature_axis = _cartesian_axes(
-            frame, self.s_column, self.temperature_column
-        )
-        q_grid = _grid_column(
-            frame,
-            self.q_column,
-            self.s_column,
-            self.temperature_column,
-            s_axis,
-            temperature_axis,
+    def fit(self, s_train, T_train, q_train, noise_std=None):
+        s_axis, T_axis, q_grid, sigma_grid = _grid_inputs(
+            s_train, T_train, q_train, noise_std
         )
 
         minimum = 2 * half_integer_order(self.nu) + 3
-        if s_axis.size < minimum or temperature_axis.size < minimum:
-            raise ValueError("too few training points per axis")
+        if s_axis.size < minimum or T_axis.size < minimum:
+            raise ValueError("too few training coordinates per axis")
 
         latent_grid = -q_grid if self.learn_neg_flux else q_grid
+        self.s_axis = s_axis.copy()
+        self.T_axis = T_axis.copy()
+        self.q_grid = q_grid.copy()
         self.s_mean = float(np.mean(s_axis))
         self.s_scale = float(np.std(s_axis))
-        self.temperature_mean = float(np.mean(temperature_axis))
-        self.temperature_scale = float(np.std(temperature_axis))
+        self.T_mean = float(np.mean(T_axis))
+        self.T_scale = float(np.std(T_axis))
         self.y_mean = float(np.mean(latent_grid))
         self.y_scale = float(np.std(latent_grid))
-        scales = (
-            self.s_scale,
-            self.temperature_scale,
-            self.y_scale,
-        )
-        if any(not np.isfinite(scale) or scale <= np.finfo(float).eps for scale in scales):
-            raise ValueError("training data must vary in s, T, and q")
+
+        for scale in (self.s_scale, self.T_scale, self.y_scale):
+            if not np.isfinite(scale) or scale <= np.finfo(float).eps:
+                raise ValueError("training data must vary in s, T, and q")
 
         s_standardized = (s_axis - self.s_mean) / self.s_scale
-        temperature_standardized = (
-            temperature_axis - self.temperature_mean
-        ) / self.temperature_scale
+        T_standardized = (T_axis - self.T_mean) / self.T_scale
         y_standardized = (latent_grid - self.y_mean) / self.y_scale
-        noise_variance = self._noise_grid(
-            frame,
-            q_grid,
-            noise_std,
-            s_axis,
-            temperature_axis,
-        )
+        noise_variance = self._noise_variance(sigma_grid)
 
         s_virtual = np.linspace(s_axis[0], s_axis[-1], self.n_virtual_per_axis)
-        temperature_virtual = np.linspace(
-            temperature_axis[0],
-            temperature_axis[-1],
-            self.n_virtual_per_axis,
-        )
+        T_virtual = np.linspace(T_axis[0], T_axis[-1], self.n_virtual_per_axis)
         s_virtual = (s_virtual - self.s_mean) / self.s_scale
-        temperature_virtual = (
-            temperature_virtual - self.temperature_mean
-        ) / self.temperature_scale
+        T_virtual = (T_virtual - self.T_mean) / self.T_scale
 
         monotone_sign = 1 if self.learn_neg_flux else -1
         self.model = MonotoneKernelPacketGP(
-            (s_standardized, temperature_standardized),
-            (s_virtual, temperature_virtual),
+            (s_standardized, T_standardized),
+            (s_virtual, T_virtual),
             self.nu,
             self.lengthscale,
             self.variance,
@@ -985,21 +923,21 @@ class MonotoneGPKPFluxST:
     def evaluate(self, s_q, T_q):
         if self.model is None:
             raise RuntimeError("provider is not fitted")
+
         s = np.atleast_1d(np.asarray(s_q, dtype=float))
-        temperature = np.atleast_1d(np.asarray(T_q, dtype=float))
+        T = np.atleast_1d(np.asarray(T_q, dtype=float))
         try:
-            s, temperature = np.broadcast_arrays(s, temperature)
+            s, T = np.broadcast_arrays(s, T)
         except ValueError as error:
             raise ValueError("s_q and T_q are not broadcast-compatible") from error
-        if np.any(~np.isfinite(s)) or np.any(~np.isfinite(temperature)):
+        if np.any(~np.isfinite(s)) or np.any(~np.isfinite(T)):
             raise ValueError("query points must be finite")
 
         shape = s.shape
         points = np.column_stack(
             [
                 (s.reshape(-1) - self.s_mean) / self.s_scale,
-                (temperature.reshape(-1) - self.temperature_mean)
-                / self.temperature_scale,
+                (T.reshape(-1) - self.T_mean) / self.T_scale,
             ]
         )
         count = points.shape[0]
@@ -1016,7 +954,7 @@ class MonotoneGPKPFluxST:
 
         f = self.y_mean + self.y_scale * f
         df_ds *= self.y_scale / self.s_scale
-        df_dT *= self.y_scale / self.temperature_scale
+        df_dT *= self.y_scale / self.T_scale
         sign = -1.0 if self.learn_neg_flux else 1.0
         return (
             (sign * f).reshape(shape),
