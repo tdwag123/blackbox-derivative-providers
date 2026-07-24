@@ -75,7 +75,7 @@ def structured_table_from_chopped_data(df, n_s=CHOP_GRID_S, n_T=CHOP_GRID_T):
                 continue
             
             observation_mask[s_idx, T_idx] = True
-            q_grid[s_idx, T_idx] = float(cell["q_noisy"]).mean()
+            q_grid[s_idx, T_idx] = float(cell["q_noisy"].mean())
             if has_sigma:
                 sigma_grid[s_idx, T_idx] = float(cell["sigma"].mean())
     
