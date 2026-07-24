@@ -327,6 +327,7 @@ if __name__ == "__main__":
     'RFF_flexible'
     'RFF_constrained'
     'MaternGPMonotone'
+    'MonotoneGPKPEP'
 
     Datasets:
     'nonlinear_no_noise.csv',
@@ -336,7 +337,7 @@ if __name__ == "__main__":
     'linear_medium_noise.csv',
     '''
 
-    exp_name = "monotoneGPTest"
+    exp_name = "monotoneGPKPEPtest"
 
     regularization_options = [
         "",
@@ -363,8 +364,9 @@ if __name__ == "__main__":
     dependency_check_methods = [
         #"kissgp",
         #"mlp",
-        "materngpmonotone_unregularized",
-        "materngpmonotone_regularized",
+        # "materngpmonotone_unregularized",
+        # "materngpmonotone_regularized",
+        "monotonegpkpep",
     ]
     methods = [
         method + regularization
