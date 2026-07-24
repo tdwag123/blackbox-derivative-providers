@@ -602,7 +602,7 @@ def build_provider(method, df, training_df):
             if regularized 
             else 0.0)
         
-        provider = build_monotone_kp_provider(MonotoneGPKPFluxST,training_df, s_grid, T_grid, q_grid_kp, 
+        provider = build_monotone_kp_provider(MonotoneGPKPFluxST, s_grid, T_grid, q_grid_kp, 
                                               observation_mask, sigma_grid, use_tikhonov=regularized, function_regularization=function_strength,
                                               derivative_regularization=derivative_strength)
         flux_law = unscaled_flux(provider)
