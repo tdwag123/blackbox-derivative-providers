@@ -337,7 +337,7 @@ if __name__ == "__main__":
     'linear_medium_noise.csv',
     '''
 
-    exp_name = "monotoneGPKPEPtest"
+    exp_name = "monotoneGPKPEPtest_noreg"
 
     regularization_options = [
         "",
@@ -366,8 +366,8 @@ if __name__ == "__main__":
         #"mlp",
         # "materngpmonotone_unregularized",
         # "materngpmonotone_regularized",
-        "monotonegpkpep",
-        "monotonegpkpep_unregularized",
+        # "monotonegpkpep",
+        # "monotonegpkpep_unregularized",
         "monotonegpkpep_regularized",
     ]
     methods = [
