@@ -8,13 +8,13 @@ from scipy.sparse import eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 
 from Testing.Deprecated.data import structured_table_from_chopped_data, scaled_structured_table_from_physical
-from tabular_models import (
-    LocalSavGolProvider,
-    SAVGOL_NEIGHBORS,
-    TabularFiniteDifferenceProvider,
-    project_table_nonincreasing_in_s,
-    smooth_table_3x3,
-)
+# from tabular_models import (
+#     LocalSavGolProvider,
+#     SAVGOL_NEIGHBORS,
+#     TabularFiniteDifferenceProvider,
+#     project_table_nonincreasing_in_s,
+#     smooth_table_3x3,
+# )
 
 ROOT = Path(__file__).resolve().parents[1]
 TABULAR_DIR = ROOT / "TabularDataMethods"
@@ -286,24 +286,24 @@ def build_provider(method, df, training_df):
         provider = CubicSplineFluxST(s_hat_grid, T_hat_grid, q_grid_scaled)
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
-    elif method_key == "pchip":
-        q_grid_pchip = project_table_nonincreasing_in_s(q_grid_scaled)
+    # elif method_key == "pchip":
+    #     q_grid_pchip = project_table_nonincreasing_in_s(q_grid_scaled)
 
-        provider = PchipFluxST(
-            s_hat_grid, T_hat_grid, q_grid_pchip,
-            extrapolate=False,
-        )
-        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+    #     provider = PchipFluxST(
+    #         s_hat_grid, T_hat_grid, q_grid_pchip,
+    #         extrapolate=False,
+    #     )
+    #     flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
-    elif method_key in {"smooth+pchip", "smoothpchip"}:
-        q_grid_smooth = smooth_table_3x3(q_grid_scaled)
-        q_grid_smooth_pchip = project_table_nonincreasing_in_s(q_grid_smooth)
+    # elif method_key in {"smooth+pchip", "smoothpchip"}:
+    #     q_grid_smooth = smooth_table_3x3(q_grid_scaled)
+    #     q_grid_smooth_pchip = project_table_nonincreasing_in_s(q_grid_smooth)
 
-        provider = PchipFluxST(
-            s_hat_grid, T_hat_grid, q_grid_smooth_pchip,
-            extrapolate=False,
-        )
-        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+    #     provider = PchipFluxST(
+    #         s_hat_grid, T_hat_grid, q_grid_smooth_pchip,
+    #         extrapolate=False,
+    #     )
+    #     flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
     elif method_key == "rbf":
         method_options.setdefault("epsilon", 2.3)
@@ -331,14 +331,14 @@ def build_provider(method, df, training_df):
         )
         flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
-    elif method_key == "savgol":
-        provider = LocalSavGolProvider(
-            np.column_stack([s_hat_data, T_hat_data]),
-            q_noisy_data,
-            K=min(SAVGOL_NEIGHBORS, len(training_df)),
-            h=0.9,
-        )
-        flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
+    # elif method_key == "savgol":
+    #     provider = LocalSavGolProvider(
+    #         np.column_stack([s_hat_data, T_hat_data]),
+    #         q_noisy_data,
+    #         K=min(SAVGOL_NEIGHBORS, len(training_df)),
+    #         h=0.9,
+    #     )
+    #     flux_law = scaled_flux(provider, s_mean, s_std, T_mean, T_std)
 
     elif method_key in {"kiss-gp", "kissgp"}:
         if KISSGPFluxST is None:
@@ -362,11 +362,11 @@ def build_provider(method, df, training_df):
         )
         flux_law = unscaled_flux(provider)
 
-    elif method_key == "finitediff":
-        provider = TabularFiniteDifferenceProvider(s_grid, T_grid,q_grid_physical)
-        flux_law = unscaled_flux(provider)
-        h_s = provider.ds
-        h_T = provider.dT
+    # elif method_key == "finitediff":
+    #     provider = TabularFiniteDifferenceProvider(s_grid, T_grid,q_grid_physical)
+    #     flux_law = unscaled_flux(provider)
+    #     h_s = provider.ds
+    #     h_T = provider.dT
 
     elif method_key in {"fdmatern52", "fd-matern52", "fdmatern"}:
         provider = TabularFDMaternSmoothST(s_grid, T_grid, q_grid_physical)
