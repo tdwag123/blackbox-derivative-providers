@@ -79,7 +79,7 @@ def _packet_constraints(nodes, kernel, kind):
         add_rows(1, p)
         add_rows(-1, nodes.size - p - 3)
     
-    matrix = np.asaray(rows, dtype=float)
+    matrix = np.asarray(rows, dtype=float)
     if matrix.shape != (nodes.size - 1, nodes.size):
         raise RuntimeError("invalid packet constraint system")
     norms = np.linalg.norm(matrix, axis=1)
