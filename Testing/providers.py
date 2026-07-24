@@ -586,11 +586,40 @@ def build_provider(method, df, training_df):
         # q, dq/ds, and dq/dT.
         flux_law = unscaled_flux(provider)
     
-    elif method_key in {"monotoneGPKPEP", "monotoneGPKPEP_unregularized", "monotoneGPKPEP_regularized"}:
+    elif method_key in {"monotoneGPKPEP", "monotonegpkpep_unregularized", "monotonegpkpep_regularized"}:
         if MonotoneGPFluxST is None:
             raise ImportError("monotoneGPKPEP requires NumPy, and SciPy")
 
-        # NEED TO FINISH THIS LATER!!!
+        regularized = (
+            method_key == "monotonegpkpep_unregularized"
+            or method_options.get("ridge_strength", 0.0) > 0.0
+        )
+        provider = MonotoneGPKPFluxST(
+            training_df,
+            s_column="s",
+            temperature_column="T",
+            q_column="q_noisy",
+            noise_column="sigma",
+            noise_std=None,
+            learn_neg_flux=True,
+            nu=2.5,
+            lengthscale=1.0,
+            variance=1.0,
+            n_virtual_per_axis=10,
+            probit_nu=1.0e-6,
+            ep_max_iter=100,
+            ep_damping=0.7,
+            ep_tol=1.0e-5,
+            jitter=1.0e-10,
+            use_tikhonov=regularized,
+            function_regularization=1.0e-4,
+            derivative_regularization=1.0e-2,
+            variance_batch_size=32,
+            prediction_batch_size=4096,
+            verbose=False,
+        )
+
+        flux_law = unscaled_flux(provider)
 
     # ADD MORE METHODS/MODELS HERE
 
