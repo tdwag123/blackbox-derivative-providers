@@ -1,15 +1,17 @@
 """
-...
+Looking at scikit-learn's RBFSampler, we construct MaternSampler that follows the same format
+https://github.com/scikit-learn/scikit-learn/blob/main/sklearn/kernel_approximation.py
 """
 
 import numpy as np
 
-class StudentTSampler:
+
+class MaternSampler:
     """
     If we draw frequencies from a Student t's distribution, we are approximating a Matern kernel.
     """
     def __init__(
-        self, 
+        self,
         match_gaussian_variance,
         df, # controls tail heaviness
         n_components=400, 
@@ -28,4 +30,7 @@ class StudentTSampler:
             raise ValueError(
                 "df must be greater than 2 when matching Gaussian variance."
             )
+        
+
+        
 
