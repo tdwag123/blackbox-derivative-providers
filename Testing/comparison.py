@@ -366,8 +366,7 @@ if __name__ == "__main__":
         #"mlp",
         # "materngpmonotone_unregularized",
         # "materngpmonotone_regularized",
-        "monotonegpkpep_unregularized",
-        "monotonegpkpep_regularized",
+        "monotonegpkpep",
     ]
     methods = [
         method + regularization

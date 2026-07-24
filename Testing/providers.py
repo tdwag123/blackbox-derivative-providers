@@ -586,39 +586,19 @@ def build_provider(method, df, training_df):
         # q, dq/ds, and dq/dT.
         flux_law = unscaled_flux(provider)
     
-    elif method_key in {"monotoneGPKPEP", "monotonegpkpep_unregularized", "monotonegpkpep_regularized"}:
-        if MonotoneGPFluxST is None:
-            raise ImportError("monotoneGPKPEP requires NumPy, and SciPy")
-
-        regularized = (
-            method_key == "monotonegpkpep_unregularized"
-            or method_options.get("ridge_strength", 0.0) > 0.0
+    elif method_key in {"monotonegpkpep"}:
+        if MonotoneGPKPFluxST is None:
+            raise ImportError("MonotoneGPKPFluxST could not be imported")
+        
+        provider = build_monotone_kp_provider(
+            MonotoneGPKPFluxST,
+            training_df, 
+            s_grid,
+            T_grid, 
+            q_grid, 
+            function_regularization=1.0e-4, # change for no reg experiments
+            derivative_regularization=1.0e-2, # change for reg experiments
         )
-        provider = MonotoneGPKPFluxST(
-            training_df,
-            s_column="s",
-            temperature_column="T",
-            q_column="q_noisy",
-            noise_column="sigma",
-            noise_std=None,
-            learn_neg_flux=True,
-            nu=2.5,
-            lengthscale=1.0,
-            variance=1.0,
-            n_virtual_per_axis=10,
-            probit_nu=1.0e-6,
-            ep_max_iter=100,
-            ep_damping=0.7,
-            ep_tol=1.0e-5,
-            jitter=1.0e-10,
-            use_tikhonov=regularized,
-            function_regularization=1.0e-4,
-            derivative_regularization=1.0e-2,
-            variance_batch_size=32,
-            prediction_batch_size=4096,
-            verbose=False,
-        )
-
         flux_law = unscaled_flux(provider)
 
     # ADD MORE METHODS/MODELS HERE
@@ -648,3 +628,42 @@ def build_provider(method, df, training_df):
         "T_std": T_std,
         "provider": provider,
     }
+
+# !!only for GP monotone KPEP!!
+def build_monotone_kp_provider(
+    provider_class,
+    training_df,
+    s_grid,
+    T_grid,
+    q_grid,
+    function_regularization=0.0,
+    derivative_regularization=0.0,
+):
+    if "sigma" in training_df.columns:
+        sigma = training_df["sigma"].to_numpy(dtype=float)
+        noise_std = float(np.sqrt(np.mean(sigma**2)))
+    else:
+        noise_std = None
+
+    return provider_class(
+        s_grid,
+        T_grid,
+        q_grid,
+        noise_std=noise_std,
+        learn_neg_flux=True,
+        nu=2.5,
+        lengthscale=1.0,
+        variance=1.0,
+        n_virtual_per_axis=10,
+        probit_nu=1.0e-3,
+        ep_max_iter=100,
+        ep_damping=0.7,
+        ep_tol=1.0e-5,
+        jitter=1.0e-10,
+        use_tikhonov=True,
+        function_regularization=function_regularization,
+        derivative_regularization=derivative_regularization,
+        variance_batch_size=32,
+        prediction_batch_size=4096,
+        verbose=False,
+    )
