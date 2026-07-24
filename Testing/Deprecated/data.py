@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-CHOP_GRID_S = 17
-CHOP_GRID_T = 17
+CHOP_GRID_S = 50
+CHOP_GRID_T = 50
 MAX_ROWS_PER_CELL = 1
 
 def grid_chop_dataframe(
