@@ -12,7 +12,7 @@ sys.path.append(str(ROOT))
 from Basic.newton_1d_fire_documentation import NM
 from Methods.AnalyticReference import a_true, b_true, q_true
 from data import CHOP_GRID_S, CHOP_GRID_T, MAX_ROWS_PER_CELL, grid_chop_dataframe
-from providers import build_provider
+from Testing.TabularTesting.providers import build_provider
 
 # =================== accuracy evaluation functions =========================================
 
