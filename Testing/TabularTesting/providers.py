@@ -6,7 +6,7 @@ import numpy as np
 from scipy.sparse import eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 
-from data import structured_table_from_chopped_data, scaled_structured_table_from_physical
+from Testing.Deprecated.data import structured_table_from_chopped_data, scaled_structured_table_from_physical
 from tabular_models import (
     LocalSavGolProvider,
     SAVGOL_NEIGHBORS,
