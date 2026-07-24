@@ -122,12 +122,12 @@ class MaternHalfInteger1D:
     def __init__(self, nu=2.5, lengthscale=1.0):
         self.nu = float(nu)
         self.lengthscale = float(lengthscale)
-        self.order = half_integer_order(self.nu)
+        self.p = half_integer_order(self.nu)
         if not np.isfinite(self.lengthscale) or self.lengthscale <= 0.0:
             raise ValueError("lengthscale must be positive")
-        self.packet_degree = 2 * self.order + 3
+        self.packet_degree = 2 * self.p + 3
         self.decay_rate = np.sqrt(2.0 * self.nu) / self.lengthscale
-        self.coefficients = _matern_coefficients(self.order)
+        self.coefficients = _matern_coefficients(self.p)
         self.first_coefficients = np.polynomial.polynomial.polyder(self.coefficients)
         self.second_coefficients = np.polynomial.polynomial.polyder(
             self.first_coefficients
@@ -141,7 +141,7 @@ class MaternHalfInteger1D:
         return np.exp(-z) * polynomial
 
     def covariance_derivative(self, x, y):
-        if self.order < 1:
+        if self.p < 1:
             raise ValueError("nu must be at least 3/2")
         x = np.asarray(x, dtype=float).reshape(-1)
         y = np.asarray(y, dtype=float).reshape(-1)
@@ -159,7 +159,7 @@ class MaternHalfInteger1D:
         return result
 
     def covariance_second_derivative(self, x, y):
-        if self.order < 1:
+        if self.p < 1:
             raise ValueError("nu must be at least 3/2")
         x = np.asarray(x, dtype=float).reshape(-1)
         y = np.asarray(y, dtype=float).reshape(-1)
@@ -194,7 +194,7 @@ class KernelPacketFactorization1D:
         equally_spaced = _equally_spaced(self.axis)
 
         for index, kind, node_indices in _packet_layout(
-            self.size, self.kernel.order
+            self.size, self.kernel.p
         ):
             nodes = self.axis[node_indices]
             if kind == "interior" and equally_spaced and cached_interior is not None:
