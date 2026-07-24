@@ -204,29 +204,6 @@ def unscaled_flux(provider):
         return (float(q[0]), float(dq_ds[0]), float(dq_dT[0]))
     return flux_law
 
-def cartesian_observation_data(training_df, s_grid, T_grid):
-    observation_mask = np.zeros((len(s_grid), len(T_grid)), dtype = bool)
-    sigma_grid = np.zeros((len(s_grid), len(T_grid)), dtype = bool)
-    s_lookup = {float(value): index for index, value in enumerate(s_grid)}
-    T_lookup = {float(value): index for index, value in enumerate(T_grid)}
-    has_sigma = "sigma" in training_df.columns
-    for row in training_df.itertuples(index=False):
-        s_value = float(getattr(row, "s"))
-        T_value = float(getattr(row, "T"))
-        if s_value not in s_lookup or T_value not in T_lookup: 
-            continue
-
-        i = s_lookup[s_value]
-        j = T_lookup[T_value]
-        observation_mask[i,j] = True
-        if has_sigma:
-            sigma_grid[i,j] = float(getattr(row, "sigma"))
-    
-    if not np.any(observation_mask):
-        raise ValueError("no training rows map to the Cartesian grid")
-    
-    return observation_mask, sigma_grid
-
 def build_provider(method, df, training_df):
 
     provider = None
@@ -245,7 +222,10 @@ def build_provider(method, df, training_df):
     T_mean = float(training_df["T"].mean())
     T_std = float(training_df["T"].std()) or 1.0
 
-    s_grid, T_grid, q_grid_physical = structured_table_from_chopped_data(training_df)
+    s_grid, T_grid, q_grid_physical, observation_mask, sigma_grid = structured_table_from_chopped_data(training_df)
+
+    q_grid_kp = q_grid_physical.copy()
+
     h_s = float(np.median(np.diff(s_grid)))
     h_T = float(np.median(np.diff(T_grid)))
 
@@ -622,8 +602,8 @@ def build_provider(method, df, training_df):
             if regularized 
             else 0.0)
         
-        provider = build_monotone_kp_provider(MonotoneGPKPFluxST,training_df, s_grid, T_grid, q_grid_physical,
-                                              use_tikhonov=regularized, function_regularization=function_strength,
+        provider = build_monotone_kp_provider(MonotoneGPKPFluxST,training_df, s_grid, T_grid, q_grid_kp, 
+                                              observation_mask, sigma_grid, use_tikhonov=regularized, function_regularization=function_strength,
                                               derivative_regularization=derivative_strength)
         flux_law = unscaled_flux(provider)
 
@@ -662,37 +642,56 @@ def build_provider(method, df, training_df):
 # !!only for GP monotone KPEP!!
 def build_monotone_kp_provider(
     provider_class,
-    training_df,
     s_grid,
     T_grid,
     q_grid_physical,
+    observation_mask,
+    sigma_grid,
     use_tikhonov=False,
     function_regularization=0.0,
     derivative_regularization=0.0,
 ):
-    observation_mask, sigma_grid = cartesian_observation_data(training_df, s_grid, T_grid)
-    noise_std = sigma_grid if "sigma" in training_df.columns else None
     return provider_class(
         s_grid,
         T_grid,
         q_grid_physical,
-        noise_std=noise_std,
+        noise_std=sigma_grid,
         observation_mask=observation_mask,
+
+        # sigma values from the CSV are relative
         noise_is_relative=True,
+
         learn_neg_flux=True,
         nu=2.5,
+
         lengthscale="auto",
-        lengthscale_candidates=(0.25, 0.5, 1.0, 2.0, 4.0),
+        lengthscale_candidates=(
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            4.0,
+        ),
+
         variance=1.0,
+
         n_virtual_per_axis=7,
         probit_nu=5.0e-2,
+
         ep_max_iter=100,
         ep_damping=0.4,
         ep_tol=1.0e-6,
+
         jitter=1.0e-10,
+
         use_tikhonov=use_tikhonov,
-        function_regularization=function_regularization,
-        derivative_regularization=derivative_regularization,
+        function_regularization=(
+            function_regularization
+        ),
+        derivative_regularization=(
+            derivative_regularization
+        ),
+
         variance_batch_size=32,
         prediction_batch_size=4096,
         verbose=False,

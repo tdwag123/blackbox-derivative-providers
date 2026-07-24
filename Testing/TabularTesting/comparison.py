@@ -6,7 +6,7 @@ import time
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
 
 from Basic.newton_1d_fire_documentation import NM
@@ -367,8 +367,8 @@ if __name__ == "__main__":
         # "materngpmonotone_unregularized",
         # "materngpmonotone_regularized",
         # "monotonegpkpep",
-        # "monotonegpkpep_unregularized",
-        "monotonegpkpep_regularized",
+        "monotonegpkpep_unregularized",
+        # "monotonegpkpep_regularized",
     ]
     methods = [
         method + regularization
