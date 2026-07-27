@@ -337,7 +337,7 @@ if __name__ == "__main__":
     'linear_medium_noise.csv',
     '''
 
-    exp_name = "monotoneGPKPEPtest_noreg_2"
+    exp_name = "monotoneGPKPEPtest_noreg_3"
 
     regularization_options = [
         "",
