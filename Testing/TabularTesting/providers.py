@@ -675,8 +675,8 @@ def build_monotone_kp_provider(
 
         variance=1.0,
 
-        n_virtual_per_axis=7,
-        probit_nu=5.0e-2,
+        n_virtual_per_axis=15,
+        probit_nu=1.0e-6,
 
         ep_max_iter=100,
         ep_damping=0.4,
