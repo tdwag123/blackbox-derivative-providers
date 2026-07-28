@@ -81,7 +81,7 @@ def _posterior(self, L, tau, eta):
 def _run_ep(self, K, y, noise_variance):
     n = y.size
     m = K.shape[0] - n
-    L = np.linalg.cholesky(L + self.jitter * np.eye(K.shape[0]))
+    L = np.linalg.cholesky(K + self.jitter * np.eye(K.shape[0]))
     tau = np.zeros(n + m)
     eta = np.zeros(n + m)
     tau[:n] = 1.0/noise_variance
