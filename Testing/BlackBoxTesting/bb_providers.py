@@ -305,6 +305,12 @@ class AdaptiveBlackBoxProvider:
         # First ever query: seed the active cache with 10d nearby samples.
         if len(self.cache.active) == 0:
             self._sample_neighborhood(point, self.options.initial_points)
+        elif not self._has_local_coverage(point, self.options.effective_sample_radius):
+            # KISS-GP in particular cannot evaluate far outside the fitted
+            # interpolation grid. More generally, stale far-away cache points
+            # should not be trusted for local derivatives at a new quadrature state.
+            self._sample_neighborhood(point, self.options.refill_points)
+            self.refinement_count += 1
 
         result = None
         for attempt in range(self.options.max_refinements_per_eval + 1):
@@ -471,6 +477,18 @@ class AdaptiveBlackBoxProvider:
 
     def _surrogate_has_variance(self, surrogate):
         return self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp"}
+
+    def _has_local_coverage(self, point, radius):
+        s_data, T_data, _ = self.cache.arrays()
+        if len(s_data) < max(4, STATE_DIM + 1):
+            return False
+
+        X = np.column_stack([s_data, T_data])
+        distances = np.linalg.norm(
+            self._to_scaled(X) - self._to_scaled(point.reshape(1, 2)),
+            axis=1,
+        )
+        return np.count_nonzero(distances <= radius) >= max(4, STATE_DIM + 1)
 
     def _sample_neighborhood(self, point, n_points):
         if n_points <= 0:
