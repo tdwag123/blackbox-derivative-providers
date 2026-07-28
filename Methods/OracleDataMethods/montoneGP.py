@@ -1,3 +1,10 @@
+"""
+MUST DO:
+* figure out regularization (noise scaling? why wasn't it working before?)
+* dynamic virtual updates, look more at Minka paper 
+
+"""
+
 import numpy as np
 from scipy.linalg import cho_solve
 from scipy.special import log_ndtr
