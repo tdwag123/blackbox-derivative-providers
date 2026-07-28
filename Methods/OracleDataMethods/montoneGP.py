@@ -1,6 +1,5 @@
 """
 MUST DO:
-* figure out regularization (noise scaling? why wasn't it working before?)
 * dynamic virtual updates, look more at Minka paper 
 
 """
