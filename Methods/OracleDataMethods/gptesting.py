@@ -44,7 +44,7 @@ def rmse(prediction, truth):
 
 
 def diagnostics(model):
-    return float(model.joint_condition), float(model.alpha_norm)
+    return float(model.joint_condition_), float(model.alpha_norm_)
 
 def common_model_arguments():
     return{
