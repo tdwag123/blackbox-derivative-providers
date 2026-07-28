@@ -107,8 +107,8 @@ class AdaptiveBBOptions:
 
     # When uncertainty is too high, add this many new oracle samples near the
     # current quadrature state, then refit a fresh local surrogate.
-    refill_points: int = 6
-    max_refinements_per_eval: int = 3
+    refill_points: int = 4
+    max_refinements_per_eval: int = 0
     rng_seed: int = 0
 
     # "hybrid" gives a small structured stencil first, then fills the rest with
@@ -122,7 +122,7 @@ class AdaptiveBBOptions:
 
     # GP-like methods use predictive variance. Non-GP methods use normalized
     # training MSE on cached points near the current query point.
-    mse_tolerance: float = 2.5e-3
+    mse_tolerance: float = 2.0e-1
     variance_tolerance: float = 2.5e-3
 
     # Enforce your rule that the sampling ball is at least twice the FEM spacing.
@@ -398,10 +398,12 @@ class AdaptiveBlackBoxProvider:
         X_scaled = self._to_scaled(np.column_stack([s_data, T_data]))
         self.surrogate_fit_count += 1
 
-        # Kernel ridge / RBF is the simplest non-GP local surrogate.
+        # Kernel ridge / RBF is the simplest non-GP local surrogate. With this
+        # small active cache, the default ridge is deliberately not tiny; the
+        # high-noise sweeps favored about 1e-3 over the older 1e-4 default.
         if self.method_key in {"bb_rbf", "bb_krr", "bb_rbf_krr"}:
             epsilon = self.model_options.get("epsilon", None)
-            ridge = self.model_options.get("ridge_strength", 1.0e-4)
+            ridge = self.model_options.get("ridge_strength", 1.0e-3)
             return KernelDerivativeProviderST(
                 X_scaled[:, 0],
                 X_scaled[:, 1],
@@ -411,10 +413,11 @@ class AdaptiveBlackBoxProvider:
                 ridge_strength=ridge,
             )
 
-        # Same KRR machinery, but with a Matern 5/2 kernel.
+        # Same KRR machinery, but with a Matern 5/2 kernel. The same low-sample
+        # ridge default is used here; larger values oversmoothed in the sweeps.
         if self.method_key in {"bb_matern52_krr", "bb_matern_krr"}:
             epsilon = self.model_options.get("epsilon", None)
-            ridge = self.model_options.get("ridge_strength", 1.0e-4)
+            ridge = self.model_options.get("ridge_strength", 1.0e-3)
             return KernelDerivativeProviderST(
                 X_scaled[:, 0],
                 X_scaled[:, 1],
@@ -434,9 +437,9 @@ class AdaptiveBlackBoxProvider:
                 X_scaled[:, 1],
                 q_data,
                 regularization="ridge",
-                n_components=self.model_options.get("n_components", 400),
-                gamma=self.model_options.get("gamma", 1.0),
-                alpha=self.model_options.get("alpha", 1.0e-5),
+                n_components=self.model_options.get("n_components", 200),
+                gamma=self.model_options.get("gamma", 0.5),
+                alpha=self.model_options.get("alpha", 1.0e-1),
                 random_state=self.model_options.get("rng_seed", 0),
             )
 
