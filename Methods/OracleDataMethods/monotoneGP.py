@@ -39,6 +39,7 @@ class MonotoneGPFluxST:
         self.n_restarts_optimizer = n_restarts_optimizer
         self.fit(s_train, T_train, q_train, noise=noise_std)
 
+
 def _kernel_parts(self, X, Y):
     delta = X[:, None, :]- Y[None, :, :]
     r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
