@@ -1,5 +1,7 @@
 """
 Testing setup for preliminary GP troubleshoots. 
+- includes regularization sweeps, plots reconstructed flux and derivatives
+
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,7 +16,7 @@ from monotoneGPReg import MonotoneGPFluxST as RegMonotoneGPFluxST
 # EXPERIMENT CONTROLS
 seed = 42
 n_train  = 15
-noise_std = 0.20
+noise_std = 0.20 # learned noise level ~ here 
 n_virt = 10
 
 regularization_strengths = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0]
@@ -187,7 +189,7 @@ def print_best_models(results):
     best_q = min(regularized_results, key = lambda result: result["q_rmse"])
     best_dq_ds = min(regularized_results, key=lambda result: result["dq_ds_rmse"])
     best_dq_dT = min(regularized_results, key=lambda result: result["dq_dT_rmse"])
-    print("\n Best regularized models")
+    print("\nBest regularized models")
     print(f"Flux reconstruction: {best_q['regularization_strength']:.1e} (RMSE = {best_q['q_rmse']:.6g})") 
     print(f"dq/ds reconstruction: {best_dq_ds['regularization_strength']:.1e} (RMSE = {best_dq_ds['dq_ds_rmse']:.6g})") 
     print(f"dq/dT reconstruction: {best_dq_dT['regularization_strength']:.1e} (RMSE = {best_dq_dT['dq_dT_rmse']:.6g})")

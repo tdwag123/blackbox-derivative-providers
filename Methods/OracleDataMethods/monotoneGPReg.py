@@ -5,13 +5,21 @@ MUST DO:
 * look more at using EP evidence for effiient hyperparameter optimization
 --> in fact, look at the Minka paper to understand interleaved hyperparameter updates
 
+** for regularization, see tracy's email
+use WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10, 1e1)), 
+set alpha=jitter in GPRegressor
+--> then use learned noise level in the EP algorithm
+--> set reg_function to be less than noise variance because shouldn't
+override learned noise estimate
+--> turn on optimizer restarts LBFGS opti is a local optimizer, try n_restarts_opti=5
+
 """
 
 import numpy as np
 from scipy.linalg import cho_solve
 from scipy.special import log_ndtr
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 class MonotoneGPFluxST: 
     def __init__(
@@ -28,8 +36,8 @@ class MonotoneGPFluxST:
         ep_damping=0.5,
         ep_tol=1e-5,
         jitter=1e-8,
-        n_restarts_optimizer=0,
-        reg_function=1e-6,
+        n_restarts_optimizer=5,  
+        reg_function=1e-6, 
         reg_derivative=1e-4,
     ):
         self.learn_neg_flux = learn_neg_flux
@@ -88,6 +96,9 @@ class MonotoneGPFluxST:
         n = y.size
         m = K.shape[0] - n
         L = np.linalg.cholesky(K)
+        noise_variance = np.asarray(noise_variance, dtype=float).reshape(-1)
+        if noise_variance.size == 1:
+            noise_variance = np.full(n, noise_variance.item())
         tau = np.zeros(n + m)
         eta = np.zeros(n + m)
         tau[:n] = 1.0/noise_variance
@@ -152,22 +163,37 @@ class MonotoneGPFluxST:
             raise ValueError("noise_std must be scalar or match the training data.")
         if np.any(sigma < 0.0):
             raise ValueError("noise_std must be nonnegative.")
-        noise_variance = np.maximum((sigma / self.y_scale_) ** 2, self.jitter)
-        sklearn_kernel = ConstantKernel(1.0, (1e-4, 1e4)) * Matern(
+        self.supplied_noise_variance_standardized_ = (sigma/self.y_scale_)**2
+        signal_kernel = ConstantKernel(1.0, (1e-4, 1e4)) * Matern(
             length_scale=np.ones(2),
             length_scale_bounds=(1e-2, 1e2),
             nu=2.5,
         )
+        sklearn_kernel = signal_kernel + WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10,1e1))
         gp = GaussianProcessRegressor(
             kernel=sklearn_kernel,
-            alpha=noise_variance,
+            alpha=self.jitter,
             normalize_y=False,
             n_restarts_optimizer=self.n_restarts_optimizer,
             random_state=0,
         )
         gp.fit(X, y)
-        self.variance_ = float(gp.kernel_.k1.constant_value)
-        self.lengthscales_ = np.asarray(gp.kernel_.k2.length_scale, dtype=float)
+        fitted_signal_kernel = gp.kernel_.k1
+        fitted_white_kernel = gp.kernel_.k2
+        self.variance_ = float(fitted_signal_kernel.k1.constant_value)
+        self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
+        self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
+        self.learned_noise_std_ = np.sqrt(self.learned_noise_variance_)
+        self.ep_observation_noise_variance_ = max(self.learned_noise_variance_, self.jitter)
+        self.learned_noise_variance_physical_ = self.learned_noise_variance_ * self.y_scale_ ** 2
+        self.learned_noise_std_physical_ = np.sqrt(self.learned_noise_variance_physical_)
+        self.gp_kernel_ = gp.kernel_
+        self.log_marginal_likelihood_ = float(gp.log_marginal_likelihood_value_)
+        # reg function should not dominate learned observation noise
+        if self.reg_function >= self.learned_noise_variance_:
+            raise ValueError("reg function must be smaller than learned noise variance:"
+                             f"reg_function={self.reg_function:.3e}," 
+                             f"learned_noise_variance={self.learned_noise_variance:.3e}")
         s_axis = np.linspace(X[:, 0].min(), X[:, 0].max(), self.n_virtual_per_axis)
         T_axis = np.linspace(X[:, 1].min(), X[:, 1].max(), self.n_virtual_per_axis)
         S, TT = np.meshgrid(s_axis, T_axis, indexing="ij")
@@ -183,12 +209,14 @@ class MonotoneGPFluxST:
         n_virt = Z.shape[0]
         tikhonov_diagonal = np.concatenate([np.full(n_obs, self.reg_function), 
                                             np.full(n_virt, self.reg_derivative)])
-        K += np.diag(tikhonov_diagonal) + self.jitter * np.eye(K.shape[0])
-
+        K += np.diag(tikhonov_diagonal)
+        K += self.jitter * np.eye(K.shape[0])
+        ep_noise_variance = np.full(n_obs, self.ep_observation_noise_variance_)
         self.X_train_ = X
         self.X_virtual_ = Z
-        self.joint_condition_ = np.linalg.cond(K) 
-        self.alpha_ = self._run_ep(K, y, noise_variance)
+        self.ep_noise_variance_ = ep_noise_variance
+        self.joint_condition_ = float(np.linalg.cond(K))
+        self.alpha_ = self._run_ep(K, y, ep_noise_variance)
         self.alpha_norm_ = np.linalg.norm(self.alpha_) 
         return self
         
