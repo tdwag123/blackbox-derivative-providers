@@ -16,8 +16,8 @@ n_train  = 20
 noise_std = 0.15
 n_virt = 20
 
-func_reg = 1e-3
-deriv_reg = 1e-2
+function_regularization = 1e-3
+derivative_regularization = 1e-2
 
 OUTPUT_DIR = Path(__file__).resolve().parent/"GPComparisonResults"
 
@@ -92,8 +92,8 @@ def fit_models(s_train, T_train, q_train):
         s_train,
         T_train,
         q_train,
-        function_regularization=func_reg,
-        derivative_regularization=deriv_reg,
+        function_regularization=function_regularization,
+        derivative_regularization=derivative_regularization,
         **common,
     )
     reg_time = time.perf_counter() - start
