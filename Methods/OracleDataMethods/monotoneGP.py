@@ -28,94 +28,93 @@ class MonotoneGPFluxST:
         ep_tol=1e-5,
         jitter=1e-8,
         n_restarts_optimizer=0,
-    ):
+    ):  
         self.learn_neg_flux = learn_neg_flux
         self.n_virtual_per_axis = n_virtual_per_axis
         self.probit_nu = probit_nu
-        self.exp_max_iter = ep_max_iter
+        self.ep_max_iter = ep_max_iter
         self.ep_damping = ep_damping
         self.ep_tol = ep_tol
         self.jitter = jitter
         self.n_restarts_optimizer = n_restarts_optimizer
-        self.fit(s_train, T_train, q_train, noise=noise_std)
+        self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
+    def _kernel_parts(self, X, Y):
+        delta = X[:, None, :]- Y[None, :, :]
+        r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
+        return delta, r
 
-def _kernel_parts(self, X, Y):
-    delta = X[:, None, :]- Y[None, :, :]
-    r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
-    return delta, r
+    def _K(self, X, Y):
+        _, r = self._kernel_parts(X, Y)
+        a = np.sqrt(5.0)
+        return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) 
+                * np.exp(-a * r))
 
-def _K(self, X, Y):
-    _, r = self._kernel_parts(X, Y)
-    a = np.sqrt(5.0)
-    return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) 
-            * np.exp(-a * r))
+    def _dK_dx(self, X, Y, dim):
+        delta, r = self._kernel_parts(X, Y)
+        a = np.sqrt(5.0)
+        factor = -(5.0/3.0) * self.variance_ * (1.0 + a * r) * np.exp(-a * r)
+        return factor * delta[:, :, dim] / self.lengthscales_[dim] ** 2
 
-def _dK_dx(self, X, Y, dim):
-    delta, r = self._kernel_parts(X, Y)
-    a = np.sqrt(5.0)
-    factor = -(5.0/3.0) * self.variance_ (1.0 + a * r) * np.exp(-a * r)
-    return factor * delta[:, :, dim] / self.lengthscales_[dim] ** 2
+    def _dK_dy(self, X, Y, dim):
+        return -self._dK_dx(X, Y, dim)
 
-def _dK_dy(self, X, Y, dim):
-    return -self._dK_dx(X, Y, dim)
+    def _d2K_dxdy(self, X, Y, dim_x, dim_y):
+        delta, r = self._kernel_parts(X, Y)
+        a = np.sqrt(5.0)
+        lx = self.lengthscales_[dim_x]
+        ly = self.lengthscales_[dim_y]
+        diagonal = (5.0/3.0) * (1.0 + a * r) * (dim_x == dim_y) / lx**2
+        outer = (25.0/3.0) * delta[:, :, dim_x] * delta[:, :, dim_y]/(lx**2 * ly**2)
+        return self.variance_ * np.exp(-a * r) * (diagonal - outer)
 
-def _d2K_dxdy(self, X, Y, dim_x, dim_y):
-    delta, r = self._kernel_parts(X, Y)
-    a = np.sqrt(5.0)
-    lx = self.lengthscales_[dim_x]
-    ly = self.lengthscales_[dim_y]
-    diagonal = (5.0/3.0) * (1.0 + a * r) * (dim_x == dim_y) / lx**2
-    outer = (25.0/3.0) * delta[:, :, dim_x] * delta[:, :, dim_y]/(lx**2, ly**2)
-    return self.variance_ * np.exp(-a * r) * (diagonal - outer)
+    def _posterior(self, L, tau, eta):
+        n = L.shape[0]
+        B = np.eye(n) + L.T @ (tau[:, None] * L)
+        C = np.linalg.cholesky(B)
+        mean_white = cho_solve((C, True), L.T @ eta, check_finite=False)
+        mean = L @ mean_white
+        solved = cho_solve((C, True), L.T, check_finite=False)
+        variance = np.sum(L * solved.T, axis=1)
+        alpha = eta - tau * mean
+        return mean, variance, alpha
 
-def _posterior(self, L, tau, eta):
-    n = L.shape[0]
-    B = np.eye(n) + L.T @ (tau[:, None] * L)
-    C = np.linalg.cholesky(B)
-    mean_white = cho_solve((C, True), L.T @ eta, check_finite=False)
-    mean = L @ mean_white
-    solved = cho_solve((C, True), L.T, check_finite=False)
-    variance = np.sum(L * solved.T, axis=1)
-    alpha = eta - tau * mean
-    return mean, variance, alpha
+    def _run_ep(self, K, y, noise_variance):
+        n = y.size
+        m = K.shape[0] - n
+        L = np.linalg.cholesky(K + self.jitter * np.eye(K.shape[0]))
+        tau = np.zeros(n + m)
+        eta = np.zeros(n + m)
+        tau[:n] = 1.0/noise_variance
+        eta[:n] = y/noise_variance
 
-def _run_ep(self, K, y, noise_variance):
-    n = y.size
-    m = K.shape[0] - n
-    L = np.linalg.cholesky(K + self.jitter * np.eye(K.shape[0]))
-    tau = np.zeros(n + m)
-    eta = np.zeros(n + m)
-    tau[:n] = 1.0/noise_variance
-    eta[:n] = y/noise_variance
+        for iteration in range(self.ep_max_iter):
+            mean, variance, _ = self._posterior(L, tau, eta)
+            old_tau = tau.copy()
+            old_eta = eta.copy()
 
-    for iteration in range(self.ep_max_iter):
-        mean, variance, _ = self._posterior(L, tau, eta)
-        old_tau = tau.copy()
-        old_eta = eta.copy()
-
-        for j in range(m):
-            i = n + j
-            cavity_precision = 1.0 / variance[i] - old_eta[i]
-            if cavity_precision <= 1e-12:
-                continue
-            cavity_variance = 1.0/cavity_precision
-            cavity_mean = (mean[i]/variance[i] - old_eta[i]) * cavity_variance
-            scale = np.sqrt(cavity_variance + self.probit_nu**2)
-            z = cavity_mean/scale
-            mills = np.exp(-0.5 * z**2 - 0.5 * np.log(2.0 * np.pi) - log_ndtr(z))
-            tilted_mean = cavity_mean + cavity_mean * mills / scale
-            tilted_variance = cavity_variance * (1.0 - cavity_variance * mills * (mills + z)
-                                                 / (cavity_variance + self.probit_nu**2))
-            tilted_variance = max(tilted_variance, 1e-12)
-            new_tau = 1.0/tilted_variance - cavity_precision
-            if new_tau < 0.0:
-                new_tau = 0.0
-                new_eta = 0.0
-            else:
-                new_eta = tilted_mean/tilted_variance - cavity_mean/cavity_variance
-            tau[i] = (1.0 - self.ep_damping) * old_tau[i] + self.ep_damping * new_tau
-            eta[i] = (1.0 - self.ep_damping) * old_eta[i] + self.ep_damping * new_eta
+            for j in range(m):
+                i = n + j
+                cavity_precision = 1.0 / variance[i] - old_tau[i]
+                if cavity_precision <= 1e-12:
+                    continue
+                cavity_variance = 1.0/cavity_precision
+                cavity_mean = (mean[i]/variance[i] - old_eta[i]) * cavity_variance
+                scale = np.sqrt(cavity_variance + self.probit_nu**2)
+                z = cavity_mean/scale
+                mills = np.exp(-0.5 * z**2 - 0.5 * np.log(2.0 * np.pi) - log_ndtr(z))
+                tilted_mean = cavity_mean + cavity_variance * mills / scale
+                tilted_variance = cavity_variance * (1.0 - cavity_variance * mills * (mills + z)
+                                                    / (cavity_variance + self.probit_nu**2))
+                tilted_variance = max(tilted_variance, 1e-12)
+                new_tau = 1.0/tilted_variance - cavity_precision
+                if new_tau < 0.0:
+                    new_tau = 0.0
+                    new_eta = 0.0
+                else:
+                    new_eta = tilted_mean/tilted_variance - cavity_mean/cavity_variance
+                tau[i] = (1.0 - self.ep_damping) * old_tau[i] + self.ep_damping * new_tau
+                eta[i] = (1.0 - self.ep_damping) * old_eta[i] + self.ep_damping * new_eta
             tau_change = np.max(np.abs(tau-old_tau)/(1.0 + np.abs(old_tau)))
             eta_change = np.max(np.abs(eta - old_eta) / (1.0 + np.abs(old_eta)))
             change = max(tau_change, eta_change)
@@ -175,7 +174,9 @@ def _run_ep(self, K, y, noise_variance):
         K = 0.5 * (K + K.T)
         self.X_train_ = X
         self.X_virtual_ = Z
+        self.joint_condition_ = np.linalg.cond(K)
         self.alpha_ = self._run_ep(K, y, noise_variance)
+        self.alpha_norm_ = np.linalg.norm(self.alpha_)
         return self
     
     def evaluate(self, s_q, T_q):
