@@ -10,12 +10,15 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
 
+
 from Data.BlackBoxOracle.blackboxoracle import (  # noqa: E402
     ORACLE_CONFIGS,
     make_diffusion_oracle,
     physical_flux,
     physical_flux_derivatives,
 )
+
+# ----------------------- import derivative providers ------------------------------------------------------------------
 from Methods.TabularDataMethods.KernelMethods import KernelDerivativeProviderST  # noqa: E402
 
 try:
@@ -34,7 +37,7 @@ try:
     from Methods.OracleDataMethods.monotoneGP import MonotoneGPFluxST
 except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
-
+# -----------------------------------------------------------------------------------------------------------------------
 
 STATE_DIM = 2
 
@@ -45,16 +48,18 @@ class LocalPolynomialDerivativeProvider:
     def __init__(self, s_data, T_data, q_data, degree=3, ridge_strength=0.0):
         self.degree = int(degree)
         self.ridge_strength = float(ridge_strength)
-        self.powers = [
+        self.powers = [ # list of powers for all polynomial pairs up to degree (i.e. 1, T, s, T^2, sT, s^2, etc.)
             (i, j)
             for total_degree in range(self.degree + 1)
             for i in range(total_degree + 1)
             for j in [total_degree - i]
         ]
 
+        # setting up input and target data
         X = self._design(np.asarray(s_data, dtype=float), np.asarray(T_data, dtype=float))
         y = np.asarray(q_data, dtype=float).reshape(-1)
 
+        # model is Xc ~= y; we compute coefficients c that satisfy this
         if self.ridge_strength > 0.0:
             lhs = X.T @ X + self.ridge_strength * np.eye(X.shape[1])
             rhs = X.T @ y
@@ -97,7 +102,7 @@ class AdaptiveBBOptions:
 
     # Radius is measured in scaled (s, T) coordinates. The effective radius is
     # also forced to be at least 2 * FEM mesh spacing below.
-    sample_radius: float = 0.25
+    sample_radius: float = 0.25 
     validation_radius_factor: float = 1.5
 
     # d = 2 for this 1D FEM problem because the constitutive state is (s, T).
