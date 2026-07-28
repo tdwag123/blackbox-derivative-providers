@@ -39,6 +39,54 @@ except (ImportError, OSError, AttributeError):
 STATE_DIM = 2
 
 
+class LocalPolynomialDerivativeProvider:
+    """Polynomial least-squares surrogate with analytic derivatives."""
+
+    def __init__(self, s_data, T_data, q_data, degree=3, ridge_strength=0.0):
+        self.degree = int(degree)
+        self.ridge_strength = float(ridge_strength)
+        self.powers = [
+            (i, j)
+            for total_degree in range(self.degree + 1)
+            for i in range(total_degree + 1)
+            for j in [total_degree - i]
+        ]
+
+        X = self._design(np.asarray(s_data, dtype=float), np.asarray(T_data, dtype=float))
+        y = np.asarray(q_data, dtype=float).reshape(-1)
+
+        if self.ridge_strength > 0.0:
+            lhs = X.T @ X + self.ridge_strength * np.eye(X.shape[1])
+            rhs = X.T @ y
+            self.coef_ = np.linalg.solve(lhs, rhs)
+        else:
+            self.coef_, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+    def _design(self, s, T):
+        s = np.asarray(s, dtype=float).reshape(-1)
+        T = np.asarray(T, dtype=float).reshape(-1)
+        return np.column_stack([(s**i) * (T**j) for i, j in self.powers])
+
+    def evaluate(self, s_q, T_q):
+        s_q = np.asarray(s_q, dtype=float)
+        T_q = np.asarray(T_q, dtype=float)
+        shape = s_q.shape
+        s = s_q.reshape(-1)
+        T = T_q.reshape(-1)
+
+        q = self._design(s, T) @ self.coef_
+        dq_ds = np.zeros_like(q, dtype=float)
+        dq_dT = np.zeros_like(q, dtype=float)
+
+        for coef, (i, j) in zip(self.coef_, self.powers):
+            if i > 0:
+                dq_ds += coef * i * (s ** (i - 1)) * (T**j)
+            if j > 0:
+                dq_dT += coef * j * (s**i) * (T ** (j - 1))
+
+        return q.reshape(shape), dq_ds.reshape(shape), dq_dT.reshape(shape)
+
+
 @dataclass
 class AdaptiveBBOptions:
     # Physical state bounds used to keep random samples inside the oracle domain.
@@ -139,11 +187,14 @@ def parse_method_spec(method):
                 elif key in {
                     "refill_points",
                     "max_refinements_per_eval",
+                    "initial_points_per_dim",
+                    "max_points_per_dim",
                     "rng_seed",
                     "n_components",
                     "training_iter",
                     "grid_size",
                     "n_virtual_per_axis",
+                    "degree",
                 }:
                     options[key] = int(value)
                 else:
@@ -387,6 +438,17 @@ class AdaptiveBlackBoxProvider:
                 gamma=self.model_options.get("gamma", 1.0),
                 alpha=self.model_options.get("alpha", 1.0e-5),
                 random_state=self.model_options.get("rng_seed", 0),
+            )
+
+        # Local polynomial model. Degree 3 can represent the current analytic
+        # oracle exactly in the noiseless case if the local sample set is good.
+        if self.method_key in {"bb_poly", "bb_polynomial"}:
+            return LocalPolynomialDerivativeProvider(
+                X_scaled[:, 0],
+                X_scaled[:, 1],
+                q_data,
+                degree=self.model_options.get("degree", 3),
+                ridge_strength=self.model_options.get("ridge_strength", 0.0),
             )
 
         # KISS-GP can return predictive variance, so this path uses variance as
@@ -642,6 +704,14 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         validation_radius_factor=method_options.get(
             "validation_radius_factor",
             AdaptiveBBOptions.validation_radius_factor,
+        ),
+        initial_points_per_dim=method_options.get(
+            "initial_points_per_dim",
+            AdaptiveBBOptions.initial_points_per_dim,
+        ),
+        max_points_per_dim=method_options.get(
+            "max_points_per_dim",
+            AdaptiveBBOptions.max_points_per_dim,
         ),
         refill_points=method_options.get("refill_points", AdaptiveBBOptions.refill_points),
         max_refinements_per_eval=method_options.get(
