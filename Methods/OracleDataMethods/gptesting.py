@@ -92,8 +92,8 @@ def fit_models(s_train, T_train, q_train):
         s_train,
         T_train,
         q_train,
-        function_regularization=function_regularization,
-        derivative_regularization=derivative_regularization,
+        reg_function=function_regularization,
+        reg_derivative=derivative_regularization,
         **common,
     )
     reg_time = time.perf_counter() - start
