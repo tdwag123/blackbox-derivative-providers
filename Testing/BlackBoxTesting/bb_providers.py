@@ -266,7 +266,6 @@ class AdaptiveBlackBoxProvider:
         )
         self.scale[self.scale == 0.0] = 1.0
 
-
     def evaluate(self, s_q, T_q):
         # Provider classes are vector-shaped, but Newton usually calls the flux
         # law one scalar quadrature state at a time. This supports both.
@@ -286,7 +285,6 @@ class AdaptiveBlackBoxProvider:
             dq_dT_values.ravel()[index] = dq_dT
 
         return q_values, dq_ds_values, dq_dT_values
-
 
     def _evaluate_one(self, s, T):
         self.eval_count += 1
@@ -330,7 +328,6 @@ class AdaptiveBlackBoxProvider:
 
         return result[:3]
 
-
     def _evaluate_one_stencil(self, point):
         self._load_best_stencil_state(point)
         if not self._stencil_is_fresh(point):
@@ -341,7 +338,6 @@ class AdaptiveBlackBoxProvider:
         self.last_uncertainty = np.nan
         self.last_status = "stencil_ok"
         return result[:3]
-
 
     def _load_best_stencil_state(self, point):
         best_key = None
@@ -367,7 +363,6 @@ class AdaptiveBlackBoxProvider:
         self.current_surrogate = state.surrogate
         self.current_stencil_center = state.center
 
-
     def _save_stencil_state(self):
         if self.current_stencil_key is None:
             self.current_stencil_key = ("region", len(self.stencil_states), self.eval_count)
@@ -380,7 +375,6 @@ class AdaptiveBlackBoxProvider:
         while len(self.stencil_states) > self.options.max_stencil_states:
             self.stencil_states.popitem(last=False)
 
-
     def _stencil_is_fresh(self, point):
         if self.current_surrogate is None or self.current_stencil_center is None:
             self.last_staleness_reason = "no_surrogate"
@@ -388,7 +382,6 @@ class AdaptiveBlackBoxProvider:
 
         self.last_staleness_reason = "fresh"
         return True
-
 
     def _refresh_stencil(self, point):
         self.current_stencil_center = point.copy()
@@ -400,7 +393,6 @@ class AdaptiveBlackBoxProvider:
         self._sample_neighborhood(point, n_points)
         self.current_surrogate = self._fit_surrogate()
         self.refinement_count += 1
-
 
     def _fit_surrogate(self):
         s_data, T_data, q_data = self.oracle_cache.arrays()
@@ -488,7 +480,6 @@ class AdaptiveBlackBoxProvider:
 
         raise ValueError(f"unknown blackbox method: {self.method_key}")
 
-
     def _surrogate_evaluate(self, surrogate, point):
         scaled = self._to_scaled(point.reshape(1, 2))
         if self._surrogate_has_variance(surrogate):
@@ -510,20 +501,16 @@ class AdaptiveBlackBoxProvider:
         dq_dT = float(dq_dT_hat[0] / self.scale[1])
         return float(q[0]), dq_ds, dq_dT, float(variance[0])
 
-
     def _gp_variance(self, result):
         return max(float(result[3]), 0.0)
-
 
     def _gp_variance_is_ok(self, variance):
         if not np.isfinite(variance):
             return False
         return variance <= self.options.variance_tolerance
 
-
     def _surrogate_has_variance(self, surrogate):
         return self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp"}
-
 
     def _is_gp_method(self):
         return self.method_key in {
@@ -533,7 +520,6 @@ class AdaptiveBlackBoxProvider:
             "bb_monotonegp",
             "bb_materngpmonotone",
         }
-
 
     def _has_local_coverage(self, point, radius):
         s_data, T_data, _ = self.oracle_cache.arrays()
@@ -546,7 +532,6 @@ class AdaptiveBlackBoxProvider:
             axis=1,
         )
         return np.count_nonzero(distances <= radius) >= max(4, STATE_DIM + 1)
-
 
     def _sample_neighborhood(self, point, n_points):
         if n_points <= 0:
@@ -593,7 +578,6 @@ class AdaptiveBlackBoxProvider:
                 "could not build enough in-domain stencil samples near the query point"
             )
 
-
     def _structured_samples(self, point, n_points):
         if n_points <= 0:
             return []
@@ -622,7 +606,6 @@ class AdaptiveBlackBoxProvider:
 
         return samples
 
-
     def _random_ball_samples(self, point, n_points):
         samples = []
         widths = self._sample_widths()
@@ -637,17 +620,14 @@ class AdaptiveBlackBoxProvider:
             samples.append(point + widths * radial_fraction * direction)
         return samples
 
-
     def _sample_widths(self):
         return np.array(
             [self.options.sample_width_s, self.options.sample_width_T],
             dtype=float,
         )
 
-
     def _region_distance(self, point, center):
         return float(np.linalg.norm((point - center) / self._sample_widths()))
-
 
     def _clip_physical(self, point):
         # This keeps samples in-domain. Right now the most important bound is T.
@@ -658,7 +638,6 @@ class AdaptiveBlackBoxProvider:
             ],
             dtype=float,
         )
-
 
     def _fold_into_domain(self, point):
         point = np.asarray(point, dtype=float).copy()
@@ -671,16 +650,13 @@ class AdaptiveBlackBoxProvider:
             point[dim] = np.clip(point[dim], lower, upper)
         return point
 
-
     def _to_scaled(self, points):
         points = np.asarray(points, dtype=float)
         return (points - self.center) / self.scale
 
-
     def _from_scaled(self, scaled_point):
         scaled_point = np.asarray(scaled_point, dtype=float)
         return self.center + self.scale * scaled_point
-
 
     def diagnostics(self):
         # These are read after Newton. Reading diagnostics does not call the
@@ -816,3 +792,4 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         "cache_size": options.cache_size,
         "max_stencil_states": options.max_stencil_states,
     }
+
