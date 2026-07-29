@@ -14,7 +14,7 @@ from Data.BlackBoxOracle.blackboxoracle import ORACLE_CONFIGS  # noqa: E402
 from Testing.BlackBoxTesting.bb_moving_local_providers import (  # noqa: E402
     build_provider as build_moving_provider,
 )
-from Testing.BlackBoxTesting.bb_providers import build_provider  # noqa: E402
+from Testing.BlackBoxTesting.bb_providers_stencil import build_provider  # noqa: E402
 from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
     build_provider as build_tolerance_provider,
 )

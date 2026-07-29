@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from Testing.BlackBoxTesting.bb_providers import (
+from Testing.BlackBoxTesting.bb_providers_stencil import (
     AdaptiveBBOptions,
     KernelDerivativeProviderST,
     RFFDerivativeProviderST,

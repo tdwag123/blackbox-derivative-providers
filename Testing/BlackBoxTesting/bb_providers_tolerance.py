@@ -295,9 +295,10 @@ class AdaptiveBlackBoxProvider:
     """
     Stateful blackbox flux provider used by Newton.
 
-    Each call receives one constitutive state (s, T), adapts the active cache if
-    uncertainty is too high, trains a fresh surrogate on the active cache, and
-    returns q plus surrogate derivatives. Nothing here uses true derivatives.
+    Each call receives one constitutive state (s, T), reuses the current
+    surrogate while uncertainty is acceptable, and only samples/refits when the
+    GP variance or non-GP local MSE is too high. Nothing here uses true
+    derivatives.
     """
 
     def __init__(self, method_key, oracle, options=None, model_options=None):
@@ -313,6 +314,7 @@ class AdaptiveBlackBoxProvider:
         self.failed_refinements = 0
         self.last_uncertainty = np.nan
         self.last_status = "not_evaluated"
+        self.current_surrogate = None
 
         # Scaling map for geometry. Sampling radii and cache-neighborhood tests
         # are performed in scaled coordinates, not raw physical units.
@@ -361,36 +363,34 @@ class AdaptiveBlackBoxProvider:
         # First ever query: seed the active cache with 10d nearby samples.
         if len(self.cache.active) == 0:
             self._sample_neighborhood(point, self.options.initial_points)
-        elif not self._has_local_coverage(point, self.options.effective_sample_radius):
-            # KISS-GP in particular cannot evaluate far outside the fitted
-            # interpolation grid. More generally, stale far-away cache points
-            # should not be trusted for local derivatives at a new quadrature state.
+
+        if self.current_surrogate is None:
+            self.current_surrogate = self._fit_surrogate()
+
+        result = self._surrogate_evaluate(self.current_surrogate, point)
+        uncertainty = self._uncertainty(self.current_surrogate, point, result)
+        self.last_uncertainty = uncertainty
+
+        if self._uncertainty_is_ok(uncertainty):
+            self.last_status = "ok"
+            return result[:3]
+
+        # Bad uncertainty is the only trigger for extra oracle samples/refits.
+        # With max_refinements_per_eval=0, this still tries one sample/refit.
+        for _ in range(self.options.max_refinements_per_eval + 1):
             self._sample_neighborhood(point, self.options.refill_points)
             self.refinement_count += 1
+            self.current_surrogate = self._fit_surrogate()
 
-        result = None
-        for attempt in range(self.options.max_refinements_per_eval + 1):
-            # Surrogate is deliberately retrained for this quadrature state.
-            # There is no model cache; only oracle samples persist.
-            surrogate = self._fit_surrogate()
-            result = self._surrogate_evaluate(surrogate, point)
-            uncertainty = self._uncertainty(surrogate, point, result)
+            result = self._surrogate_evaluate(self.current_surrogate, point)
+            uncertainty = self._uncertainty(self.current_surrogate, point, result)
             self.last_uncertainty = uncertainty
-
             if self._uncertainty_is_ok(uncertainty):
-                self.last_status = "ok"
+                self.last_status = "refined_ok"
                 return result[:3]
 
-            # If uncertainty is bad, sample more near this point. If that pushes
-            # active cache past 30d, OracleEvaluationCache prunes FIFO.
-            if attempt == self.options.max_refinements_per_eval:
-                self.failed_refinements += 1
-                self.last_status = "max_refinements_uncertain"
-                return result[:3]
-
-            self._sample_neighborhood(point, self.options.refill_points)
-            self.refinement_count += 1
-
+        self.failed_refinements += 1
+        self.last_status = "max_refinements_uncertain"
         return result[:3]
 
     def _fit_surrogate(self):
@@ -659,6 +659,7 @@ class AdaptiveBlackBoxProvider:
                 "bb_failed_refinements": self.failed_refinements,
                 "bb_last_uncertainty": self.last_uncertainty,
                 "bb_last_status": self.last_status,
+                "bb_has_current_surrogate": self.current_surrogate is not None,
                 "bb_sample_radius": self.options.effective_sample_radius,
                 "bb_validation_radius": self.options.validation_radius,
                 "bb_cache_limit": self.options.max_points,
