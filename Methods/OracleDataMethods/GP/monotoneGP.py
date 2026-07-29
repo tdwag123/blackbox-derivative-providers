@@ -64,13 +64,18 @@ class MonotoneGPFluxST:
 
 
     def _kernel_parts(self, X, Y):
-        delta = X[:, None, :]- Y[None, :, :]
-        r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
+        """
+        
+        """
+        delta = X[:, None, :] - Y[None, :, :]
+        r = np.sqrt(np.sum((delta / self.lengthscales_) ** 2, axis=2))
         return delta, r
 
 
     def _K(self, X, Y):
-        """Returns covariance matrix K."""
+        """
+        Returns covariance matrix K.
+        """
         _, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) 
@@ -78,7 +83,9 @@ class MonotoneGPFluxST:
 
 
     def _dK_dx(self, X, Y, dim):
-        """Returns ."""
+        """
+        Returns .
+        """
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         factor = -(5.0/3.0) * self.variance_ * (1.0 + a * r) * np.exp(-a * r)
@@ -87,12 +94,16 @@ class MonotoneGPFluxST:
 
 
     def _dK_dy(self, X, Y, dim):
-        """Returns dK_dy."""
+        """
+        Returns dK_dy.
+        """
         return -self._dK_dx(X, Y, dim)
 
 
     def _d2K_dxdy(self, X, Y, dim_x, dim_y):
-        """Returns ."""
+        """
+        Returns .
+        """
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         lx = self.lengthscales_[dim_x]
@@ -103,7 +114,9 @@ class MonotoneGPFluxST:
 
 
     def _posterior(self, L, tau, eta):
-        """"""
+        """
+        
+        """
         n = L.shape[0]
         B = np.eye(n) + L.T @ (tau[:, None] * L)
         C = np.linalg.cholesky(B)
@@ -116,7 +129,9 @@ class MonotoneGPFluxST:
 
 
     def _run_ep(self, K, y, noise_variance):
-        """"""
+        """
+        
+        """
         n = y.size
         m = K.shape[0] - n
         L = np.linalg.cholesky(K + self.jitter * np.eye(K.shape[0]))
@@ -233,7 +248,7 @@ class MonotoneGPFluxST:
     
     def evaluate(self, s_q, T_q):
         """
-        
+
         """
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         shape = s.shape
