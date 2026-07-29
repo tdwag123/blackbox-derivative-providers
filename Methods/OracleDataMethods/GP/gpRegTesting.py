@@ -25,7 +25,7 @@ true_noise_std = 0.20 # learned noise level should match this
 n_virt = 50
 
 # func reg def as fraction of standardized noise var learned by WhiteKernel
-function_regularization_fractions = [0.0]
+function_regularization_fractions = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1, 0.0]
 derivative_regularization_strengths = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1, 0.0]
 
 OUTPUT_DIR = Path(__file__).resolve().parent/"GPDerivRegSweepResults(n_train=50, n_virt=50)"
