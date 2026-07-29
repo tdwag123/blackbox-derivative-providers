@@ -116,7 +116,7 @@ class GPFluxST:
         self.alpha_norm_ = float(np.linalg.norm(self.alpha_))
         return self
 
-    def evaluate(self, s_q, T_q):
+    def evaluate(self, s_q, T_q, return_variance=False):
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         output_shape = s.shape
         X_raw = np.column_stack([s.ravel(), T.ravel()])
@@ -131,6 +131,22 @@ class GPFluxST:
         q = sign * latent_physical
         dq_ds = sign * gradient_physical[:, 0]
         dq_dT = sign * gradient_physical[:, 1]
+
+        if return_variance:
+            K_query_train = self._K(X, self.X_train_)
+            solved = cho_solve(
+                (self.training_cholesky_, True),
+                K_query_train.T,
+                check_finite=False,
+            )
+            variance_standardized = self.variance_ - np.sum(K_query_train * solved.T, axis=1)
+            variance = self.y_scale_**2 * np.maximum(variance_standardized, 0.0)
+            return (
+                q.reshape(output_shape),
+                dq_ds.reshape(output_shape),
+                dq_dT.reshape(output_shape),
+                variance.reshape(output_shape),
+            )
 
         return (
             q.reshape(output_shape),
