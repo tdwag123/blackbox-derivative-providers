@@ -16,7 +16,7 @@ import csv
 from pathlib import Path
 import time
 
-from Methods.OracleDataMethods.GP.monotoneGPReg import MonotoneGPFluxST 
+from monotoneGPReg import MonotoneGPFluxST 
 
 # EXPERIMENT CONTROLS
 seed = 42
