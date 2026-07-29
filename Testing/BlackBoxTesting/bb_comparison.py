@@ -15,6 +15,9 @@ from Testing.BlackBoxTesting.bb_moving_local_providers import (  # noqa: E402
     build_provider as build_moving_provider,
 )
 from Testing.BlackBoxTesting.bb_providers import build_provider  # noqa: E402
+from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
+    build_provider as build_tolerance_provider,
+)
 
 
 def build_test_provider(method, oracle_config, *, x_mesh=None, noisy=True, seed=0):
@@ -22,6 +25,14 @@ def build_test_provider(method, oracle_config, *, x_mesh=None, noisy=True, seed=
     if method_text.lower().startswith("moving_"):
         return build_moving_provider(
             method_text[len("moving_") :],
+            oracle_config,
+            x_mesh=x_mesh,
+            noisy=noisy,
+            seed=seed,
+        )
+    if method_text.lower().startswith("tolerance_"):
+        return build_tolerance_provider(
+            method_text[len("tolerance_") :],
             oracle_config,
             x_mesh=x_mesh,
             noisy=noisy,
