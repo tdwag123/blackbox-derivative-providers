@@ -42,24 +42,23 @@ except (ImportError, OSError, AttributeError):
 STATE_DIM = 2
 
 
-@dataclass # main purpose is storing data
+@dataclass
 class AdaptiveBBOptions: 
-    # Physical state bounds used to keep random samples inside the oracle domain.
-    # The provider scales these bounds to roughly [-1, 1]^2 before measuring
-    # radii, so s and T do not dominate each other just because of units.
+    # Physical state bounds used to keep random samples inside oracle domain. Provider scales these bounds
+    # to roughly [-1, 1]^2 before measuring radii so s, T don't dominate each other just because of units.
     s_bounds: tuple = (-6.0, 12.0)
     T_bounds: tuple = (0.0, 15.0)
 
     # Non-GP sampling widths are physical half-widths, not scaled by bounds.
+    # sampling radius
     sample_width_s: float = 2.25
     sample_width_T: float = 1.875
     initial_cache_samples: int = 60
     samples_per_region: int = 21
     cache_size: int = 60
 
-    # Non-GP methods create at most this many regional surrogate models. Before
-    # this limit is reached, each new region gets its own fit; after that, the
-    # nearest existing region is reused.
+    # Non-GP methods create at most this many regional surrogate models. Before this limit is reached, 
+    # each new region gets its own fit; after that, the nearest existing region is reused.
     max_refinements_per_eval: int = 0
     rng_seed: int = 0
     max_stencil_states: int = 5
@@ -77,11 +76,10 @@ class AdaptiveBBOptions:
     # before duplicate checks and lru_cache lookup.
     oracle_key_decimals: int = 12
 
-    # GP-like methods use predictive variance. Non-GP methods use stencil
-    # geometry only.
+    # GP-like methods use predictive variance. Non-GP methods use stencil geometry only.
     variance_tolerance: float = 2.5e-3
 
-    # Enforce your rule that the sampling ball is at least twice the FEM spacing.
+    # Sampling ball is at least twice the FEM spacing
     min_mesh_radius_factor: float = 2.0
     mesh_spacing: float = 0.05
 
@@ -96,8 +94,10 @@ class AdaptiveBBOptions:
 
 
 def parse_method_spec(method):
-    # Allows compact experiment strings like:
-    # "bb_rbf+sample_width_s=2.0+sample_width_t=0.75+ridge_strength=1e-3"
+    """
+    Allows compact experiment strings like:
+    "bb_rbf+sample_width_s=2.0+sample_width_t=0.75+ridge_strength=1e-3"
+    """
     text = str(method)
     if "+" not in text:
         return text.lower(), {}
@@ -156,7 +156,9 @@ def parse_method_spec(method):
 
 
 class OracleCallCache:
-    """Stores oracle evaluations; every surrogate fit uses this whole cache."""
+    """
+    Stores oracle evaluations; every surrogate fit uses this whole cache.
+    """
 
     def __init__(self, oracle, options):
         self.oracle = oracle
@@ -788,3 +790,4 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         "cache_size": options.cache_size,
         "max_stencil_states": options.max_stencil_states,
     }
+
