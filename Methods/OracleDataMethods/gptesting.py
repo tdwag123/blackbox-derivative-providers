@@ -98,7 +98,8 @@ def fit_unregularized_reference(s_train, T_train, q_train):
 def run_regularization_sweep(s_train, T_train, q_train, learned_noise_variance):
     models = {}
     fit_times = {}
-    strengths = regularization_fractions * learned_noise_variance
+    strengths = [fraction * learned_noise_variance 
+                 for fraction in regularization_fractions]
     for fraction, strength in zip(regularization_fractions, strengths):
         print(f"Fitting regularized model with lambda = {strength:.1e}, ({fraction:.3e} * learned noise variance)")
         model, fit_time = fit_model(s_train, T_train, q_train, reg_function=float(strength), reg_derivative=float(strength))
