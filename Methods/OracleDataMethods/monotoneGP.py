@@ -9,6 +9,27 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
 class MonotoneGPFluxST: 
+    """
+    noise_std: assumed std dev of noise in observed flux values q
+        0 -> treats observations as exact. larger values smooth data more strongly.
+
+    learn_neg_flux: if True, learns -q(s,T) instead of q(s,T) to enforce accurate monotonicity constraints.
+
+    n_virtual_per_axis: number of virtual points.
+
+    probit_nu:
+
+    ep_max_iter: max number of EP iterations. 
+
+    ep_damping: d where new_site = (1-d)(old site) + d(proposed site).
+        d = 0.5 => algorithm takes half-step towards every proposed update
+
+    ep_tol: convergence tolerance for EP. if change in posterior approx. is less than this, EP stops.
+
+    jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I.
+
+    n_restarts_optimizer:
+    """
     def __init__(
         self,
         s_train,
