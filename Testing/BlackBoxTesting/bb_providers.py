@@ -50,32 +50,29 @@ class AdaptiveBBOptions:
     s_bounds: tuple = (-6.0, 12.0)
     T_bounds: tuple = (0.0, 15.0)
 
-    # Radius is measured in scaled (s, T) coordinates. The effective radius is
-    # also forced to be at least 2 * FEM mesh spacing below.
-    sample_radius: float = 0.25 
-    # d = 2 for this 1D FEM problem because the constitutive state is (s, T).
-    # Empty oracle cache starts full at 30d points.
-    initial_points_per_dim: int = 30
-    max_points_per_dim: int = 30
+    # Non-GP sampling widths are physical half-widths, not scaled by bounds.
+    sample_width_s: float = 2.25
+    sample_width_T: float = 1.875
+    initial_cache_samples: int = 60
+    samples_per_region: int = 21
+    cache_size: int = 60
 
-    # When a stencil is stale, add local oracle samples to the cache, then fit
-    # the surrogate on the entire current cache.
-    refill_points: int = 4
-    stencil_refresh_fraction: float = 0.35
+    # Non-GP methods create at most this many regional surrogate models. Before
+    # this limit is reached, each new region gets its own fit; after that, the
+    # nearest existing region is reused.
     max_refinements_per_eval: int = 0
     rng_seed: int = 0
-    max_stencil_states: int = 128
+    max_stencil_states: int = 5
+
+    # GP-only adaptive sampling controls. Non-GP methods do not use this radius.
+    gp_sample_radius: float = 0.25
+    gp_refill_points: int = 4
 
     # "hybrid" gives a small structured stencil first, then fills the rest with
     # random ball samples. Use "random" if you want purely random sampling.
     # Options: "axis", "random", "hybrid"
     design: str = "axis"
     include_center: bool = True
-    # Low reuse trains more, smaller regional stencils. High reuse shares each
-    # fitted stencil over a wider state-space region, saving calls but risking
-    # stale or overly broad derivatives.
-    stencil_reuse_factor: float = 1.0
-
     # Exact floating-point equality is unreliable, so sample keys are rounded
     # before duplicate checks and lru_cache lookup.
     oracle_key_decimals: int = 12
@@ -90,21 +87,17 @@ class AdaptiveBBOptions:
 
     @property
     def max_points(self):
-        return self.max_points_per_dim * STATE_DIM
-
-    @property
-    def initial_points(self):
-        return self.initial_points_per_dim * STATE_DIM
+        return self.cache_size
 
     @property
     def effective_sample_radius(self):
         min_radius = self.min_mesh_radius_factor * self.mesh_spacing
-        return max(float(self.sample_radius), float(min_radius))
+        return max(float(self.gp_sample_radius), float(min_radius))
 
 
 def parse_method_spec(method):
     # Allows compact experiment strings like:
-    # "bb_rbf+sample_radius=0.2+refill_points=4+ridge_strength=1e-4"
+    # "bb_rbf+sample_width_s=2.0+sample_width_t=0.75+ridge_strength=1e-3"
     text = str(method)
     if "+" not in text:
         return text.lower(), {}
@@ -127,7 +120,9 @@ def parse_method_spec(method):
             value = value.strip()
             try:
                 if key in {
-                    "sample_radius",
+                    "sample_width_s",
+                    "sample_width_t",
+                    "gp_sample_radius",
                     "variance_tolerance",
                     "mesh_spacing",
                     "gamma",
@@ -135,15 +130,15 @@ def parse_method_spec(method):
                     "ridge_strength",
                     "alpha",
                     "learning_rate",
-                    "stencil_reuse_factor",
-                    "stencil_refresh_fraction",
+                    "shift_threshold",
                 }:
                     options[key] = float(value)
                 elif key in {
-                    "refill_points",
+                    "gp_refill_points",
                     "max_refinements_per_eval",
-                    "initial_points_per_dim",
-                    "max_points_per_dim",
+                    "initial_cache_samples",
+                    "samples_per_region",
+                    "cache_size",
                     "rng_seed",
                     "max_stencil_states",
                     "n_components",
@@ -217,7 +212,6 @@ class OracleCallCache:
 class StencilState:
     surrogate: object
     center: np.ndarray
-    radius: float
 
 
 class AdaptiveBlackBoxProvider:
@@ -246,7 +240,6 @@ class AdaptiveBlackBoxProvider:
         self.last_status = "not_evaluated"
         self.current_surrogate = None
         self.current_stencil_center = None
-        self.current_stencil_radius = None
         self.current_stencil_key = None
         self.stencil_states = OrderedDict()
         self.last_staleness_reason = "not_evaluated"
@@ -300,11 +293,11 @@ class AdaptiveBlackBoxProvider:
 
         # GP-like methods train from the whole oracle cache after adding local samples.
         if len(self.oracle_cache.samples) == 0:
-            self._sample_neighborhood(point, self.options.initial_points)
+            self._sample_neighborhood(point, self.options.initial_cache_samples)
         elif not self._has_local_coverage(point, self.options.effective_sample_radius):
             # GP-like methods still use local coverage because KISS-GP cannot
             # evaluate far outside its fitted interpolation grid.
-            self._sample_neighborhood(point, self.options.refill_points)
+            self._sample_neighborhood(point, self.options.gp_refill_points)
             self.refinement_count += 1
 
         result = None
@@ -326,7 +319,7 @@ class AdaptiveBlackBoxProvider:
                 self.last_status = "max_refinements_uncertain"
                 return result[:3]
 
-            self._sample_neighborhood(point, self.options.refill_points)
+            self._sample_neighborhood(point, self.options.gp_refill_points)
             self.refinement_count += 1
 
         return result[:3]
@@ -343,20 +336,21 @@ class AdaptiveBlackBoxProvider:
         return result[:3]
 
     def _load_best_stencil_state(self, point):
-        scaled = self._to_scaled(point.reshape(1, 2))[0]
         best_key = None
         best_distance = np.inf
         for key, state in self.stencil_states.items():
-            distance = np.linalg.norm(scaled - state.center)
-            if distance <= self.options.stencil_reuse_factor * state.radius and distance < best_distance:
+            distance = self._region_distance(point, state.center)
+            if distance < best_distance:
                 best_key = key
                 best_distance = distance
 
-        if best_key is None:
+        if best_key is None or (
+            best_distance > 1.0e-12
+            and len(self.stencil_states) < self.options.max_stencil_states
+        ):
             self.current_stencil_key = None
             self.current_surrogate = None
             self.current_stencil_center = None
-            self.current_stencil_radius = None
             return
 
         self.current_stencil_key = best_key
@@ -364,7 +358,6 @@ class AdaptiveBlackBoxProvider:
         self.stencil_states.move_to_end(best_key)
         self.current_surrogate = state.surrogate
         self.current_stencil_center = state.center
-        self.current_stencil_radius = state.radius
 
     def _save_stencil_state(self):
         if self.current_stencil_key is None:
@@ -373,7 +366,6 @@ class AdaptiveBlackBoxProvider:
         self.stencil_states[self.current_stencil_key] = StencilState(
             surrogate=self.current_surrogate,
             center=self.current_stencil_center.copy(),
-            radius=self.current_stencil_radius,
         )
         self.stencil_states.move_to_end(self.current_stencil_key)
         while len(self.stencil_states) > self.options.max_stencil_states:
@@ -384,29 +376,17 @@ class AdaptiveBlackBoxProvider:
             self.last_staleness_reason = "no_surrogate"
             return False
 
-        distance = np.linalg.norm(
-            self._to_scaled(point.reshape(1, 2))[0] - self.current_stencil_center
-        )
-        reuse_radius = self.options.stencil_reuse_factor * self.current_stencil_radius
-        if distance > reuse_radius:
-            self.last_staleness_reason = "outside_reuse_radius"
-            return False
-
         self.last_staleness_reason = "fresh"
         return True
 
     def _refresh_stencil(self, point):
-        self.current_stencil_center = self._to_scaled(point.reshape(1, 2))[0]
-        self.current_stencil_radius = self.options.effective_sample_radius
-        points_to_sample = (
-            self.options.initial_points
+        self.current_stencil_center = point.copy()
+        n_points = (
+            self.options.initial_cache_samples
             if len(self.oracle_cache.samples) == 0
-            else max(
-                self.options.refill_points,
-                int(round(self.options.max_points * self.options.stencil_refresh_fraction)),
-            )
+            else self.options.samples_per_region
         )
-        self._sample_neighborhood(point, points_to_sample)
+        self._sample_neighborhood(point, n_points)
         self.current_surrogate = self._fit_surrogate()
         self.refinement_count += 1
 
@@ -561,7 +541,7 @@ class AdaptiveBlackBoxProvider:
 
         # Structured points give derivative-sensitive coverage around the query.
         if self.options.design in {"axis", "hybrid"}:
-            structured = self._structured_ball_samples(point, remaining)
+            structured = self._structured_samples(point, remaining)
             samples.extend(structured)
             remaining = max(0, n_points - len(samples))
 
@@ -594,12 +574,11 @@ class AdaptiveBlackBoxProvider:
                 "could not build enough in-domain stencil samples near the query point"
             )
 
-    def _structured_ball_samples(self, point, n_points):
+    def _structured_samples(self, point, n_points):
         if n_points <= 0:
             return []
 
-        radius = self.options.effective_sample_radius
-        scaled_center = self._to_scaled(point.reshape(1, 2))[0]
+        widths = self._sample_widths()
         directions = [
             # Axis directions.
             np.array([1.0, 0.0]),
@@ -619,14 +598,13 @@ class AdaptiveBlackBoxProvider:
             for direction in directions:
                 if len(samples) >= n_points:
                     return samples
-                samples.append(self._from_scaled(scaled_center + radius * fraction * direction))
+                samples.append(point + widths * fraction * direction)
 
         return samples
 
     def _random_ball_samples(self, point, n_points):
-        radius = self.options.effective_sample_radius
-        scaled_center = self._to_scaled(point.reshape(1, 2))[0]
         samples = []
+        widths = self._sample_widths()
         for _ in range(n_points):
             direction = self.rng.normal(size=STATE_DIM)
             norm = np.linalg.norm(direction)
@@ -635,9 +613,17 @@ class AdaptiveBlackBoxProvider:
             else:
                 direction = direction / norm
             radial_fraction = self.rng.random() ** (1.0 / STATE_DIM)
-            scaled = scaled_center + radius * radial_fraction * direction
-            samples.append(self._from_scaled(scaled))
+            samples.append(point + widths * radial_fraction * direction)
         return samples
+
+    def _sample_widths(self):
+        return np.array(
+            [self.options.sample_width_s, self.options.sample_width_T],
+            dtype=float,
+        )
+
+    def _region_distance(self, point, center):
+        return float(np.linalg.norm((point - center) / self._sample_widths()))
 
     def _clip_physical(self, point):
         # This keeps samples in-domain. Right now the most important bound is T.
@@ -680,10 +666,12 @@ class AdaptiveBlackBoxProvider:
                 "bb_failed_refinements": self.failed_refinements,
                 "bb_last_uncertainty": self.last_uncertainty,
                 "bb_last_status": self.last_status,
-                "bb_sample_radius": self.options.effective_sample_radius,
+                "bb_sample_width_s": self.options.sample_width_s,
+                "bb_sample_width_T": self.options.sample_width_T,
                 "bb_oracle_cache_size": len(self.oracle_cache.samples),
-                "bb_stencil_reuse_factor": self.options.stencil_reuse_factor,
-                "bb_stencil_refresh_fraction": self.options.stencil_refresh_fraction,
+                "bb_max_stencil_states": self.options.max_stencil_states,
+                "bb_initial_cache_samples": self.options.initial_cache_samples,
+                "bb_samples_per_region": self.options.samples_per_region,
                 "bb_last_staleness_reason": self.last_staleness_reason,
                 "bb_stencil_state_count": len(self.stencil_states),
             }
@@ -732,16 +720,21 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
 
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
-        sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
-        initial_points_per_dim=method_options.get(
-            "initial_points_per_dim",
-            AdaptiveBBOptions.initial_points_per_dim,
+        sample_width_s=method_options.get("sample_width_s", AdaptiveBBOptions.sample_width_s),
+        sample_width_T=method_options.get("sample_width_t", AdaptiveBBOptions.sample_width_T),
+        initial_cache_samples=method_options.get(
+            "initial_cache_samples",
+            AdaptiveBBOptions.initial_cache_samples,
         ),
-        max_points_per_dim=method_options.get(
-            "max_points_per_dim",
-            AdaptiveBBOptions.max_points_per_dim,
+        samples_per_region=method_options.get(
+            "samples_per_region",
+            AdaptiveBBOptions.samples_per_region,
         ),
-        refill_points=method_options.get("refill_points", AdaptiveBBOptions.refill_points),
+        cache_size=method_options.get("cache_size", AdaptiveBBOptions.cache_size),
+        gp_refill_points=method_options.get(
+            "gp_refill_points",
+            AdaptiveBBOptions.gp_refill_points,
+        ),
         max_refinements_per_eval=method_options.get(
             "max_refinements_per_eval",
             AdaptiveBBOptions.max_refinements_per_eval,
@@ -756,13 +749,9 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
             "variance_tolerance",
             AdaptiveBBOptions.variance_tolerance,
         ),
-        stencil_reuse_factor=method_options.get(
-            "stencil_reuse_factor",
-            AdaptiveBBOptions.stencil_reuse_factor,
-        ),
-        stencil_refresh_fraction=method_options.get(
-            "stencil_refresh_fraction",
-            AdaptiveBBOptions.stencil_refresh_fraction,
+        gp_sample_radius=method_options.get(
+            "gp_sample_radius",
+            AdaptiveBBOptions.gp_sample_radius,
         ),
         mesh_spacing=mesh_spacing,
     )
@@ -789,11 +778,13 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         "flux": flux_law,
         "build_s": time.perf_counter() - start,
         "provider": provider,
-        "h_s": options.effective_sample_radius * provider.scale[0],
-        "h_T": options.effective_sample_radius * provider.scale[1],
+        "h_s": options.sample_width_s,
+        "h_T": options.sample_width_T,
         "oracle_config": oracle_config,
-        "sample_radius": options.effective_sample_radius,
-        "stencil_reuse_factor": options.stencil_reuse_factor,
-        "stencil_refresh_fraction": options.stencil_refresh_fraction,
+        "sample_width_s": options.sample_width_s,
+        "sample_width_T": options.sample_width_T,
+        "initial_cache_samples": options.initial_cache_samples,
+        "samples_per_region": options.samples_per_region,
+        "cache_size": options.cache_size,
         "max_stencil_states": options.max_stencil_states,
     }

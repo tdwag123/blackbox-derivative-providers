@@ -11,7 +11,29 @@ sys.path.append(str(ROOT))
 
 from Basic.newton_1d_fire_documentation import NM  # noqa: E402
 from Data.BlackBoxOracle.blackboxoracle import ORACLE_CONFIGS  # noqa: E402
+from Testing.BlackBoxTesting.bb_moving_local_providers import (  # noqa: E402
+    build_provider as build_moving_provider,
+)
 from Testing.BlackBoxTesting.bb_providers import build_provider  # noqa: E402
+
+
+def build_test_provider(method, oracle_config, *, x_mesh=None, noisy=True, seed=0):
+    method_text = str(method)
+    if method_text.lower().startswith("moving_"):
+        return build_moving_provider(
+            method_text[len("moving_") :],
+            oracle_config,
+            x_mesh=x_mesh,
+            noisy=noisy,
+            seed=seed,
+        )
+    return build_provider(
+        method,
+        oracle_config,
+        x_mesh=x_mesh,
+        noisy=noisy,
+        seed=seed,
+    )
 
 
 class TimedFluxLaw:
@@ -152,7 +174,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
             print(f"\n--- {method} ---")
             try:
                 print("Building...")
-                model = build_provider(
+                model = build_test_provider(
                     method,
                     oracle_config,
                     x_mesh=x_mesh,
