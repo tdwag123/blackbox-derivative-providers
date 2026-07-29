@@ -44,12 +44,13 @@ STATE_DIM = 2
 
 @dataclass
 class AdaptiveBBOptions: 
-    # Physical state bounds used to keep random samples inside the oracle domain. Provider scales these 
-    # bounds to roughly [-1, 1]^2 before measuring radii so s, T don't dominate each other just bc of units.
+    # Physical state bounds used to keep random samples inside oracle domain. Provider scales these bounds
+    # to roughly [-1, 1]^2 before measuring radii so s, T don't dominate each other just because of units.
     s_bounds: tuple = (-6.0, 12.0)
     T_bounds: tuple = (0.0, 15.0)
 
     # Non-GP sampling widths are physical half-widths, not scaled by bounds.
+    # sampling radius
     sample_width_s: float = 2.25
     sample_width_T: float = 1.875
     initial_cache_samples: int = 60
