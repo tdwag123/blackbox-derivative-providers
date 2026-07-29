@@ -224,8 +224,9 @@ def evaluate_all_models(unregularized_model, unregularized_fit_time, regularized
                               fit_time=unregularized_fit_time,
                               S=S,
                               TT=TT,
-                              regularization_strength=0.0, 
-                              regularization_fraction=0.0)]
+                              function_fraction=0.0, 
+                              function_strength=0.0,
+                              derivative_strength=0.0)]
     for case in cases:
         function_fraction = case["function_fraction"]
         function_strength = case["function_strength"]
