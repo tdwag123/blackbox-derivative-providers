@@ -55,8 +55,8 @@ def newton(model, reference_model, x_mesh):
     )
 
     try:
-        # Newton calls model["flux"], which may sample the oracle, update the
-        # active cache, and refit local surrogates. No other metric calls it.
+        # Newton calls model["flux"], which may sample the oracle and fit local
+        # surrogates. No other metric calls it.
         U, residual_history, num_iterations = NM(
             x_mesh,
             timed_flux_law,

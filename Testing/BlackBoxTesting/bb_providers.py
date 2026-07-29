@@ -42,93 +42,46 @@ except (ImportError, OSError, AttributeError):
 STATE_DIM = 2
 
 
-class LocalPolynomialDerivativeProvider:
-    """Polynomial least-squares surrogate with analytic derivatives."""
-
-    def __init__(self, s_data, T_data, q_data, degree=3, ridge_strength=0.0):
-        self.degree = int(degree)
-        self.ridge_strength = float(ridge_strength)
-        self.powers = [ # list of powers for all polynomial pairs up to degree (i.e. 1, T, s, T^2, sT, s^2, etc.)
-            (i, j)
-            for total_degree in range(self.degree + 1)
-            for i in range(total_degree + 1)
-            for j in [total_degree - i]
-        ]
-
-        # setting up input and target data
-        X = self._design(np.asarray(s_data, dtype=float), np.asarray(T_data, dtype=float))
-        y = np.asarray(q_data, dtype=float).reshape(-1)
-
-        # model is Xc ~= y; we compute coefficients c that satisfy this
-        if self.ridge_strength > 0.0:
-            lhs = X.T @ X + self.ridge_strength * np.eye(X.shape[1])
-            rhs = X.T @ y
-            self.coef_ = np.linalg.solve(lhs, rhs)
-        else:
-            self.coef_, *_ = np.linalg.lstsq(X, y, rcond=None)
-
-    def _design(self, s, T):
-        s = np.asarray(s, dtype=float).reshape(-1)
-        T = np.asarray(T, dtype=float).reshape(-1)
-        return np.column_stack([(s**i) * (T**j) for i, j in self.powers])
-
-    def evaluate(self, s_q, T_q):
-        s_q = np.asarray(s_q, dtype=float)
-        T_q = np.asarray(T_q, dtype=float)
-        shape = s_q.shape
-        s = s_q.reshape(-1)
-        T = T_q.reshape(-1)
-
-        q = self._design(s, T) @ self.coef_
-        dq_ds = np.zeros_like(q, dtype=float)
-        dq_dT = np.zeros_like(q, dtype=float)
-
-        for coef, (i, j) in zip(self.coef_, self.powers):
-            if i > 0:
-                dq_ds += coef * i * (s ** (i - 1)) * (T**j)
-            if j > 0:
-                dq_dT += coef * j * (s**i) * (T ** (j - 1))
-
-        return q.reshape(shape), dq_ds.reshape(shape), dq_dT.reshape(shape)
-
-
 @dataclass # main purpose is storing data
 class AdaptiveBBOptions: 
     # Physical state bounds used to keep random samples inside the oracle domain.
     # The provider scales these bounds to roughly [-1, 1]^2 before measuring
     # radii, so s and T do not dominate each other just because of units.
-    s_bounds: tuple = (-6.0, 6.0)
-    T_bounds: tuple = (0.0, 3.0)
+    s_bounds: tuple = (-6.0, 12.0)
+    T_bounds: tuple = (0.0, 15.0)
 
     # Radius is measured in scaled (s, T) coordinates. The effective radius is
     # also forced to be at least 2 * FEM mesh spacing below.
     sample_radius: float = 0.25 
-    validation_radius_factor: float = 1.5
-
     # d = 2 for this 1D FEM problem because the constitutive state is (s, T).
-    # Empty cache starts with 10d points; the active FIFO cache holds 30d points.
-    initial_points_per_dim: int = 10
+    # Empty oracle cache starts full at 30d points.
+    initial_points_per_dim: int = 30
     max_points_per_dim: int = 30
 
-    # When uncertainty is too high, add this many new oracle samples near the
-    # current quadrature state, then refit a fresh local surrogate.
+    # When a stencil is stale, add local oracle samples to the cache, then fit
+    # the surrogate on the entire current cache.
     refill_points: int = 4
+    stencil_refresh_fraction: float = 0.35
     max_refinements_per_eval: int = 0
     rng_seed: int = 0
+    max_stencil_states: int = 128
 
     # "hybrid" gives a small structured stencil first, then fills the rest with
     # random ball samples. Use "random" if you want purely random sampling.
     # Options: "axis", "random", "hybrid"
     design: str = "axis"
     include_center: bool = True
+    # Low reuse trains more, smaller regional stencils. High reuse shares each
+    # fitted stencil over a wider state-space region, saving calls but risking
+    # stale or overly broad derivatives.
+    stencil_reuse_factor: float = 1.0
 
-    # Exact floating-point equality is unreliable, so oracle inputs are rounded
-    # before going through lru_cache.
+    # Exact floating-point equality is unreliable, so sample keys are rounded
+    # before duplicate checks and lru_cache lookup.
     oracle_key_decimals: int = 12
 
-    # GP-like methods use predictive variance. Non-GP methods use normalized
-    # training MSE on cached points near the current query point.
-    mse_tolerance: float = 2.0e-2
+    # GP-like methods use predictive variance. Non-GP methods use stencil
+    # geometry only.
     variance_tolerance: float = 2.5e-3
 
     # Enforce your rule that the sampling ball is at least twice the FEM spacing.
@@ -147,10 +100,6 @@ class AdaptiveBBOptions:
     def effective_sample_radius(self):
         min_radius = self.min_mesh_radius_factor * self.mesh_spacing
         return max(float(self.sample_radius), float(min_radius))
-
-    @property
-    def validation_radius(self):
-        return self.validation_radius_factor * self.effective_sample_radius
 
 
 def parse_method_spec(method):
@@ -179,8 +128,6 @@ def parse_method_spec(method):
             try:
                 if key in {
                     "sample_radius",
-                    "validation_radius_factor",
-                    "mse_tolerance",
                     "variance_tolerance",
                     "mesh_spacing",
                     "gamma",
@@ -188,6 +135,8 @@ def parse_method_spec(method):
                     "ridge_strength",
                     "alpha",
                     "learning_rate",
+                    "stencil_reuse_factor",
+                    "stencil_refresh_fraction",
                 }:
                     options[key] = float(value)
                 elif key in {
@@ -196,11 +145,11 @@ def parse_method_spec(method):
                     "initial_points_per_dim",
                     "max_points_per_dim",
                     "rng_seed",
+                    "max_stencil_states",
                     "n_components",
                     "training_iter",
                     "grid_size",
                     "n_virtual_per_axis",
-                    "degree",
                 }:
                     options[key] = int(value)
                 else:
@@ -211,28 +160,16 @@ def parse_method_spec(method):
     return method_key, options
 
 
-class OracleEvaluationCache:
-    """
-    Small active FIFO cache backed by functools.lru_cache for exact oracle calls.
-
-    The active cache is what trains the local surrogate. The lru_cache avoids
-    repeating exact expensive calls while this provider lives.
-    """
+class OracleCallCache:
+    """Stores oracle evaluations; every surrogate fit uses this whole cache."""
 
     def __init__(self, oracle, options):
         self.oracle = oracle
         self.options = options
-
-        # Active cache is the training set. OrderedDict gives FIFO pruning by
-        # popping the oldest inserted point when we exceed 30d samples.
-        self.active = OrderedDict()
+        self.samples = OrderedDict()
         self.oracle_calls = 0
-        self.cache_hits = 0
         self.prune_count = 0
 
-        # This is the requested functools cache. It only prevents repeated exact
-        # oracle calls while this provider object exists. The active FIFO cache
-        # still decides what points train the local surrogate.
         @lru_cache(maxsize=options.max_points)
         def cached_eval(s_key, T_key):
             self.oracle_calls += 1
@@ -246,59 +183,52 @@ class OracleEvaluationCache:
 
     def evaluate(self, s, T):
         key = self.key(s, T)
-
-        # Check cache_info before and after so diagnostics can report how often
-        # an exact oracle call was avoided.
-        before = self._cached_eval.cache_info()
         q = self._cached_eval(*key)
-        after = self._cached_eval.cache_info()
-        if after.hits > before.hits:
-            self.cache_hits += 1
-        self.remember(key, q)
+        if key not in self.samples:
+            self.samples[key] = q
+            while len(self.samples) > self.options.max_points:
+                self.samples.popitem(last=False)
+                self.prune_count += 1
         return q
 
-    def remember(self, key, q):
-        if key in self.active:
-            return
-        self.active[key] = q
-
-        # FIFO prune: once the active training cache is full, discard the oldest
-        # active point. This does not preserve old points for large-scale use.
-        while len(self.active) > self.options.max_points:
-            self.active.popitem(last=False)
-            self.prune_count += 1
-
     def arrays(self):
-        if not self.active:
+        if not self.samples:
             return (
                 np.array([], dtype=float),
                 np.array([], dtype=float),
                 np.array([], dtype=float),
             )
-        points = np.array(list(self.active.keys()), dtype=float)
-        q = np.array(list(self.active.values()), dtype=float)
+        points = np.array(list(self.samples.keys()), dtype=float)
+        q = np.array(list(self.samples.values()), dtype=float)
         return points[:, 0], points[:, 1], q
 
     def info(self):
         info = self._cached_eval.cache_info()
         return {
-            "active_cache_size": len(self.active),
-            "oracle_lru_size": info.currsize,
+            "oracle_cache_size": len(self.samples),
             "oracle_lru_hits": info.hits,
             "oracle_lru_misses": info.misses,
             "oracle_calls": self.oracle_calls,
-            "active_prunes": self.prune_count,
-            "tracked_cache_hits": self.cache_hits,
+            "oracle_cache_prunes": self.prune_count,
         }
+
+
+@dataclass
+class StencilState:
+    surrogate: object
+    center: np.ndarray
+    radius: float
 
 
 class AdaptiveBlackBoxProvider:
     """
     Stateful blackbox flux provider used by Newton.
 
-    Each call receives one constitutive state (s, T), adapts the active cache if
-    uncertainty is too high, trains a fresh surrogate on the active cache, and
-    returns q plus surrogate derivatives. Nothing here uses true derivatives.
+    Each call receives one constitutive state (s, T). Non-GP methods use a
+    moving stencil: build/reuse a local surrogate while the query stays in the
+    stencil region, and shift the stencil by adding only a few new in-domain
+    samples when it moves. GP-like methods can still use predictive variance.
+    Nothing here uses true derivatives.
     """
 
     def __init__(self, method_key, oracle, options=None, model_options=None):
@@ -307,15 +237,21 @@ class AdaptiveBlackBoxProvider:
         self.options = options or AdaptiveBBOptions()
         self.model_options = model_options or {}
         self.rng = np.random.default_rng(self.options.rng_seed)
-        self.cache = OracleEvaluationCache(oracle, self.options)
+        self.oracle_cache = OracleCallCache(oracle, self.options)
         self.eval_count = 0
         self.refinement_count = 0
         self.surrogate_fit_count = 0
         self.failed_refinements = 0
         self.last_uncertainty = np.nan
         self.last_status = "not_evaluated"
+        self.current_surrogate = None
+        self.current_stencil_center = None
+        self.current_stencil_radius = None
+        self.current_stencil_key = None
+        self.stencil_states = OrderedDict()
+        self.last_staleness_reason = "not_evaluated"
 
-        # Scaling map for geometry. Sampling radii and cache-neighborhood tests
+        # Scaling map for geometry. Sampling radii and neighborhood tests
         # are performed in scaled coordinates, not raw physical units.
         self.center = np.array(
             [
@@ -359,31 +295,32 @@ class AdaptiveBlackBoxProvider:
         # Stay inside the oracle domain, especially for temperature.
         point = self._clip_physical(np.array([s, T], dtype=float))
 
-        # First ever query: seed the active cache with 10d nearby samples.
-        if len(self.cache.active) == 0:
+        if not self._is_gp_method():
+            return self._evaluate_one_stencil(point)
+
+        # GP-like methods train from the whole oracle cache after adding local samples.
+        if len(self.oracle_cache.samples) == 0:
             self._sample_neighborhood(point, self.options.initial_points)
         elif not self._has_local_coverage(point, self.options.effective_sample_radius):
-            # KISS-GP in particular cannot evaluate far outside the fitted
-            # interpolation grid. More generally, stale far-away cache points
-            # should not be trusted for local derivatives at a new quadrature state.
+            # GP-like methods still use local coverage because KISS-GP cannot
+            # evaluate far outside its fitted interpolation grid.
             self._sample_neighborhood(point, self.options.refill_points)
             self.refinement_count += 1
 
         result = None
         for attempt in range(self.options.max_refinements_per_eval + 1):
-            # Surrogate is deliberately retrained for this quadrature state.
-            # There is no model cache; only oracle samples persist.
+            # GP-like methods still refit because variance is part of their
+            # accept/refine decision. Non-GP methods use _evaluate_one_stencil.
             surrogate = self._fit_surrogate()
             result = self._surrogate_evaluate(surrogate, point)
-            uncertainty = self._uncertainty(surrogate, point, result)
-            self.last_uncertainty = uncertainty
+            variance = self._gp_variance(result)
+            self.last_uncertainty = variance
 
-            if self._uncertainty_is_ok(uncertainty):
+            if self._gp_variance_is_ok(variance):
                 self.last_status = "ok"
                 return result[:3]
 
-            # If uncertainty is bad, sample more near this point. If that pushes
-            # active cache past 30d, OracleEvaluationCache prunes FIFO.
+            # If uncertainty is bad, resample locally and refit.
             if attempt == self.options.max_refinements_per_eval:
                 self.failed_refinements += 1
                 self.last_status = "max_refinements_uncertain"
@@ -394,8 +331,87 @@ class AdaptiveBlackBoxProvider:
 
         return result[:3]
 
+    def _evaluate_one_stencil(self, point):
+        self._load_best_stencil_state(point)
+        if not self._stencil_is_fresh(point):
+            self._refresh_stencil(point)
+            self._save_stencil_state()
+
+        result = self._surrogate_evaluate(self.current_surrogate, point)
+        self.last_uncertainty = np.nan
+        self.last_status = "stencil_ok"
+        return result[:3]
+
+    def _load_best_stencil_state(self, point):
+        scaled = self._to_scaled(point.reshape(1, 2))[0]
+        best_key = None
+        best_distance = np.inf
+        for key, state in self.stencil_states.items():
+            distance = np.linalg.norm(scaled - state.center)
+            if distance <= self.options.stencil_reuse_factor * state.radius and distance < best_distance:
+                best_key = key
+                best_distance = distance
+
+        if best_key is None:
+            self.current_stencil_key = None
+            self.current_surrogate = None
+            self.current_stencil_center = None
+            self.current_stencil_radius = None
+            return
+
+        self.current_stencil_key = best_key
+        state = self.stencil_states[best_key]
+        self.stencil_states.move_to_end(best_key)
+        self.current_surrogate = state.surrogate
+        self.current_stencil_center = state.center
+        self.current_stencil_radius = state.radius
+
+    def _save_stencil_state(self):
+        if self.current_stencil_key is None:
+            self.current_stencil_key = ("region", len(self.stencil_states), self.eval_count)
+
+        self.stencil_states[self.current_stencil_key] = StencilState(
+            surrogate=self.current_surrogate,
+            center=self.current_stencil_center.copy(),
+            radius=self.current_stencil_radius,
+        )
+        self.stencil_states.move_to_end(self.current_stencil_key)
+        while len(self.stencil_states) > self.options.max_stencil_states:
+            self.stencil_states.popitem(last=False)
+
+    def _stencil_is_fresh(self, point):
+        if self.current_surrogate is None or self.current_stencil_center is None:
+            self.last_staleness_reason = "no_surrogate"
+            return False
+
+        distance = np.linalg.norm(
+            self._to_scaled(point.reshape(1, 2))[0] - self.current_stencil_center
+        )
+        reuse_radius = self.options.stencil_reuse_factor * self.current_stencil_radius
+        if distance > reuse_radius:
+            self.last_staleness_reason = "outside_reuse_radius"
+            return False
+
+        self.last_staleness_reason = "fresh"
+        return True
+
+    def _refresh_stencil(self, point):
+        self.current_stencil_center = self._to_scaled(point.reshape(1, 2))[0]
+        self.current_stencil_radius = self.options.effective_sample_radius
+        points_to_sample = (
+            self.options.initial_points
+            if len(self.oracle_cache.samples) == 0
+            else max(
+                self.options.refill_points,
+                int(round(self.options.max_points * self.options.stencil_refresh_fraction)),
+            )
+        )
+        self._sample_neighborhood(point, points_to_sample)
+        self.current_surrogate = self._fit_surrogate()
+        self.refinement_count += 1
+
     def _fit_surrogate(self):
-        s_data, T_data, q_data = self.cache.arrays()
+        s_data, T_data, q_data = self.oracle_cache.arrays()
         if len(q_data) < max(STATE_DIM + 1, 4):
             raise RuntimeError("not enough blackbox samples to fit a local surrogate")
 
@@ -405,7 +421,7 @@ class AdaptiveBlackBoxProvider:
         self.surrogate_fit_count += 1
 
         # Kernel ridge / RBF is the simplest non-GP local surrogate. With this
-        # small active cache, the default ridge is deliberately not tiny; the
+        # small oracle cache, the default ridge is deliberately not tiny; the
         # high-noise sweeps favored about 1e-3 over the older 1e-4 default.
         if self.method_key in {"bb_rbf", "bb_krr", "bb_rbf_krr"}:
             epsilon = self.model_options.get("epsilon", 0.3)
@@ -433,8 +449,8 @@ class AdaptiveBlackBoxProvider:
                 ridge_strength=ridge,
             )
 
-        # Random Fourier features surrogate. Still uses the same adaptive cache
-        # policy; uncertainty is measured by local cached-point MSE.
+        # Random Fourier features surrogate. It uses the same regional stencil
+        # policy as the KRR providers.
         if self.method_key in {"bb_rff", "bb_ridge_rff"}:
             if RFFDerivativeProviderST is None:
                 raise ImportError("bb_rff requires scikit-learn RFF dependencies")
@@ -449,19 +465,8 @@ class AdaptiveBlackBoxProvider:
                 random_state=self.model_options.get("rng_seed", 0),
             )
 
-        # Local polynomial model. Degree 3 can represent the current analytic
-        # oracle exactly in the noiseless case if the local sample set is good.
-        if self.method_key in {"bb_poly", "bb_polynomial"}:
-            return LocalPolynomialDerivativeProvider(
-                X_scaled[:, 0],
-                X_scaled[:, 1],
-                q_data,
-                degree=self.model_options.get("degree", 3),
-                ridge_strength=self.model_options.get("ridge_strength", 0.0),
-            )
-
         # KISS-GP can return predictive variance, so this path uses variance as
-        # the uncertainty trigger instead of MSE.
+        # the accept/refine signal.
         if self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp"}:
             if KISSGPFluxST is None:
                 raise ImportError("bb_kissgp requires torch/gpytorch dependencies")
@@ -512,45 +517,28 @@ class AdaptiveBlackBoxProvider:
         dq_dT = float(dq_dT_hat[0] / self.scale[1])
         return float(q[0]), dq_ds, dq_dT, float(variance[0])
 
-    def _uncertainty(self, surrogate, point, result):
-        # GP uncertainty: use predictive variance returned by the GP provider.
-        if self._surrogate_has_variance(surrogate):
-            return max(float(result[3]), 0.0)
+    def _gp_variance(self, result):
+        return max(float(result[3]), 0.0)
 
-        s_data, T_data, q_data = self.cache.arrays()
-        if len(q_data) == 0:
-            return np.inf
-
-        X = np.column_stack([s_data, T_data])
-        distances = np.linalg.norm(self._to_scaled(X) - self._to_scaled(point.reshape(1, 2)), axis=1)
-        local = distances <= self.options.validation_radius
-
-        # Do not accept a low training MSE from points far away from the query.
-        # If the active cache has poor local coverage, force refinement.
-        if np.count_nonzero(local) < max(4, STATE_DIM + 1):
-            return np.inf
-
-        # Non-GP uncertainty: normalized function-value MSE on nearby cached
-        # training points. This is not a separate validation oracle call.
-        X_scaled = self._to_scaled(X[local])
-        q_pred, _, _ = surrogate.evaluate(X_scaled[:, 0], X_scaled[:, 1])
-        mse = np.mean((q_pred - q_data[local]) ** 2)
-
-        q_scale = max(float(np.std(q_data[local])), 1.0)
-        return float(mse / (q_scale**2))
-
-    def _uncertainty_is_ok(self, uncertainty):
-        if not np.isfinite(uncertainty):
+    def _gp_variance_is_ok(self, variance):
+        if not np.isfinite(variance):
             return False
-        if self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp", "bb_monotonegp", "bb_materngpmonotone"}:
-            return uncertainty <= self.options.variance_tolerance
-        return uncertainty <= self.options.mse_tolerance
+        return variance <= self.options.variance_tolerance
 
     def _surrogate_has_variance(self, surrogate):
         return self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp"}
 
+    def _is_gp_method(self):
+        return self.method_key in {
+            "bb_kissgp",
+            "bb_kiss-gp",
+            "bb_gp",
+            "bb_monotonegp",
+            "bb_materngpmonotone",
+        }
+
     def _has_local_coverage(self, point, radius):
-        s_data, T_data, _ = self.cache.arrays()
+        s_data, T_data, _ = self.oracle_cache.arrays()
         if len(s_data) < max(4, STATE_DIM + 1):
             return False
 
@@ -581,9 +569,30 @@ class AdaptiveBlackBoxProvider:
         if remaining and self.options.design in {"random", "hybrid"}:
             samples.extend(self._random_ball_samples(point, remaining))
 
-        for sample in samples[:n_points]:
-            sample = self._clip_physical(np.asarray(sample, dtype=float))
-            self.cache.evaluate(sample[0], sample[1])
+        sampled = 0
+        seen = set()
+        attempts = 0
+        while sampled < n_points and attempts < 20 * max(n_points, 1):
+            attempts += 1
+            if attempts <= len(samples):
+                sample = np.asarray(samples[attempts - 1], dtype=float)
+            else:
+                sample = np.asarray(self._random_ball_samples(point, 1)[0], dtype=float)
+
+            sample = self._fold_into_domain(sample)
+
+            key = self.oracle_cache.key(sample[0], sample[1])
+            if key in seen:
+                continue
+
+            seen.add(key)
+            self.oracle_cache.evaluate(sample[0], sample[1])
+            sampled += 1
+
+        if sampled < max(4, STATE_DIM + 1):
+            raise RuntimeError(
+                "could not build enough in-domain stencil samples near the query point"
+            )
 
     def _structured_ball_samples(self, point, n_points):
         if n_points <= 0:
@@ -603,7 +612,7 @@ class AdaptiveBlackBoxProvider:
             np.array([-1.0, 1.0]) / np.sqrt(2.0),
             np.array([-1.0, -1.0]) / np.sqrt(2.0),
         ]
-        fractions = [1.0, 0.5, 0.25]
+        fractions = [1.0, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.125]
         samples = []
 
         for fraction in fractions:
@@ -640,6 +649,17 @@ class AdaptiveBlackBoxProvider:
             dtype=float,
         )
 
+    def _fold_into_domain(self, point):
+        point = np.asarray(point, dtype=float).copy()
+        for dim, bounds in enumerate((self.options.s_bounds, self.options.T_bounds)):
+            lower, upper = bounds
+            if point[dim] < lower:
+                point[dim] = lower + (lower - point[dim])
+            if point[dim] > upper:
+                point[dim] = upper - (point[dim] - upper)
+            point[dim] = np.clip(point[dim], lower, upper)
+        return point
+
     def _to_scaled(self, points):
         points = np.asarray(points, dtype=float)
         return (points - self.center) / self.scale
@@ -651,7 +671,7 @@ class AdaptiveBlackBoxProvider:
     def diagnostics(self):
         # These are read after Newton. Reading diagnostics does not call the
         # oracle, train a surrogate, or mutate the experiment.
-        diag = self.cache.info()
+        diag = self.oracle_cache.info()
         diag.update(
             {
                 "bb_eval_count": self.eval_count,
@@ -661,8 +681,11 @@ class AdaptiveBlackBoxProvider:
                 "bb_last_uncertainty": self.last_uncertainty,
                 "bb_last_status": self.last_status,
                 "bb_sample_radius": self.options.effective_sample_radius,
-                "bb_validation_radius": self.options.validation_radius,
-                "bb_cache_limit": self.options.max_points,
+                "bb_oracle_cache_size": len(self.oracle_cache.samples),
+                "bb_stencil_reuse_factor": self.options.stencil_reuse_factor,
+                "bb_stencil_refresh_fraction": self.options.stencil_refresh_fraction,
+                "bb_last_staleness_reason": self.last_staleness_reason,
+                "bb_stencil_state_count": len(self.stencil_states),
             }
         )
         return diag
@@ -707,20 +730,9 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         x_mesh = np.asarray(x_mesh, dtype=float)
         mesh_spacing = float(np.median(np.diff(x_mesh)))
 
-    # Method-specific adaptive defaults. RBF benefited from allowing one
-    # calibrated refinement round; RFF timed out under that same rule, so keep it
-    # conservative unless the method string explicitly overrides these.
-    default_max_refinements = AdaptiveBBOptions.max_refinements_per_eval
-    if method_key in {"bb_rbf", "bb_krr", "bb_rbf_krr"}:
-        default_max_refinements = 1
-
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
         sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
-        validation_radius_factor=method_options.get(
-            "validation_radius_factor",
-            AdaptiveBBOptions.validation_radius_factor,
-        ),
         initial_points_per_dim=method_options.get(
             "initial_points_per_dim",
             AdaptiveBBOptions.initial_points_per_dim,
@@ -732,14 +744,25 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         refill_points=method_options.get("refill_points", AdaptiveBBOptions.refill_points),
         max_refinements_per_eval=method_options.get(
             "max_refinements_per_eval",
-            default_max_refinements,
+            AdaptiveBBOptions.max_refinements_per_eval,
         ),
         rng_seed=method_options.get("rng_seed", seed),
+        max_stencil_states=method_options.get(
+            "max_stencil_states",
+            AdaptiveBBOptions.max_stencil_states,
+        ),
         design=method_options.get("design", AdaptiveBBOptions.design),
-        mse_tolerance=method_options.get("mse_tolerance", AdaptiveBBOptions.mse_tolerance),
         variance_tolerance=method_options.get(
             "variance_tolerance",
             AdaptiveBBOptions.variance_tolerance,
+        ),
+        stencil_reuse_factor=method_options.get(
+            "stencil_reuse_factor",
+            AdaptiveBBOptions.stencil_reuse_factor,
+        ),
+        stencil_refresh_fraction=method_options.get(
+            "stencil_refresh_fraction",
+            AdaptiveBBOptions.stencil_refresh_fraction,
         ),
         mesh_spacing=mesh_spacing,
     )
@@ -755,7 +778,10 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
     def flux_law(s, T, xg):
         # Newton calls this. This is the only place the adaptive provider is
         # touched during the actual experiment.
-        q, dq_ds, dq_dT = provider.evaluate(np.array([s]), np.array([T]))
+        q, dq_ds, dq_dT = provider.evaluate(
+            np.array([s]),
+            np.array([T]),
+        )
         return float(q[0]), float(dq_ds[0]), float(dq_dT[0])
 
     return {
@@ -767,5 +793,7 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         "h_T": options.effective_sample_radius * provider.scale[1],
         "oracle_config": oracle_config,
         "sample_radius": options.effective_sample_radius,
-        "validation_radius": options.validation_radius,
+        "stencil_reuse_factor": options.stencil_reuse_factor,
+        "stencil_refresh_fraction": options.stencil_refresh_fraction,
+        "max_stencil_states": options.max_stencil_states,
     }
