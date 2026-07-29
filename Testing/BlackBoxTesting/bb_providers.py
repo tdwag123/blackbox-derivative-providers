@@ -42,11 +42,10 @@ except (ImportError, OSError, AttributeError):
 STATE_DIM = 2
 
 
-@dataclass # main purpose is storing data
+@dataclass
 class AdaptiveBBOptions: 
-    # Physical state bounds used to keep random samples inside the oracle domain.
-    # The provider scales these bounds to roughly [-1, 1]^2 before measuring
-    # radii, so s and T do not dominate each other just because of units.
+    # Physical state bounds used to keep random samples inside the oracle domain. Provider scales 
+    # these bounds to roughly [-1, 1]^2 before measuring radii so s, T don't dominate each other just bc of units.
     s_bounds: tuple = (-6.0, 12.0)
     T_bounds: tuple = (0.0, 15.0)
 
@@ -81,7 +80,7 @@ class AdaptiveBBOptions:
     # geometry only.
     variance_tolerance: float = 2.5e-3
 
-    # Enforce your rule that the sampling ball is at least twice the FEM spacing.
+    # Sampling ball is at least twice the FEM spacing
     min_mesh_radius_factor: float = 2.0
     mesh_spacing: float = 0.05
 
