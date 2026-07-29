@@ -226,15 +226,15 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
 
 
 if __name__ == "__main__":
-    exp_name = "blackbox_smoke"
+    exp_name = "tolerance_smoke"
     methods = [
-        "bb_rbf",
-        # "bb_rff",
+        "tolerance_bb_rbf",
+        "tolerance_bb_matern52_krr",
+        "tolerance_bb_rff",
         # "bb_kissgp",
         # "bb_monotonegp",
     ]
     oracle_configs = [
-        "linear_no_noise",
-        "nonlinear_low_noise",
+        "nonlinear_high_noise",
     ]
     comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)

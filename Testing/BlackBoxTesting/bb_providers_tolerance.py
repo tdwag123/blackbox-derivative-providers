@@ -27,6 +27,11 @@ except (ImportError, OSError):
     KISSGPFluxST = None
 
 try:
+    from Methods.OracleDataMethods.GP.baseGP import GPFluxST
+except (ImportError, OSError):
+    GPFluxST = None
+
+try:
     from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_general import (
         RFFDerivativeProviderST,
     )
@@ -474,6 +479,19 @@ class AdaptiveBlackBoxProvider:
                 ridge_strength=self.model_options.get("ridge_strength", 0.0),
             )
 
+        if self.method_key in {"bb_basegp", "bb_matern_gp"}:
+            if GPFluxST is None:
+                raise ImportError("bb_basegp requires sklearn/scipy GP dependencies")
+            return GPFluxST(
+                X_scaled[:, 0],
+                X_scaled[:, 1],
+                q_data,
+                noise_std=self.model_options.get("noise_std", 0.0),
+                jitter=self.model_options.get("jitter", 1.0e-8),
+                n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+                reg_function=self.model_options.get("reg_function", 0.0),
+            )
+
         # Hook for a monotone GP provider. This currently depends on the
         # importable state of Methods/OracleDataMethods/GP/monotoneGPReg.py.
         if self.method_key in {"bb_monotonegp", "bb_materngpmonotone"}:
@@ -541,12 +559,26 @@ class AdaptiveBlackBoxProvider:
     def _uncertainty_is_ok(self, uncertainty):
         if not np.isfinite(uncertainty):
             return False
-        if self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp", "bb_monotonegp", "bb_materngpmonotone"}:
+        if self.method_key in {
+            "bb_kissgp",
+            "bb_kiss-gp",
+            "bb_gp",
+            "bb_basegp",
+            "bb_matern_gp",
+            "bb_monotonegp",
+            "bb_materngpmonotone",
+        }:
             return uncertainty <= self.options.variance_tolerance
         return uncertainty <= self.options.mse_tolerance
 
     def _surrogate_has_variance(self, surrogate):
-        return self.method_key in {"bb_kissgp", "bb_kiss-gp", "bb_gp"}
+        return self.method_key in {
+            "bb_kissgp",
+            "bb_kiss-gp",
+            "bb_gp",
+            "bb_basegp",
+            "bb_matern_gp",
+        }
 
     def _has_local_coverage(self, point, radius):
         s_data, T_data, _ = self.cache.arrays()
