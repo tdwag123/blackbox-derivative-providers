@@ -107,7 +107,7 @@ class AdaptiveBBOptions:
 
     # d = 2 for this 1D FEM problem because the constitutive state is (s, T).
     # Empty cache starts with 10d points; the active FIFO cache holds 30d points.
-    initial_points_per_dim: int = 10
+    initial_points_per_dim: int = 30
     max_points_per_dim: int = 30
 
     # When uncertainty is too high, add this many new oracle samples near the
