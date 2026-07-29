@@ -1,7 +1,5 @@
 """
-MUST DO:
-* dynamic virtual updates, look more at Minka paper 
-* use white kernel here too (see regularized version for how)
+Description: Base code: no regularization, no white kernel. 
 """
 
 import numpy as np
