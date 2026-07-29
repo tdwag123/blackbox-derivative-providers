@@ -9,6 +9,33 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
 class MonotoneGPFluxST: 
+    """
+    noise_std: assumed std dev of noise in observed flux values q
+        0 -> treats observations as exact. larger values smooth data more strongly.
+
+    learn_neg_flux: if True, learns -q(s,T) instead of q(s,T) to enforce accurate monotonicity constraints.
+
+    n_virtual_per_axis: number of virtual points.
+
+    probit_nu: strictness of monotonicity. 
+        small -> nearly hard monotonicity; large -> softer monotonicity.
+        too small -> EP may become numerically difficult.
+        too large -> Model may tolerate noticable violations.
+
+    ep_max_iter: max number of EP iterations. 
+
+    ep_damping: d where new_site = (1-d)(old site) + d(proposed site).
+        d = 0.5 => algorithm takes half-step towards every proposed update
+
+    ep_tol: convergence tolerance for EP. if change in posterior approx. is less than this, EP stops.
+
+    jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I.
+
+    n_restarts_optimizer: extra attempts to tune GP(?)
+        if 0, runs once from default starting point. 
+        if 2, one initial run + 2 optimizations from different starting points = 3 runs.
+        uses same training data with different kernel hyperparameters each time.
+    """
     def __init__(
         self,
         s_train,
@@ -35,27 +62,48 @@ class MonotoneGPFluxST:
         self.n_restarts_optimizer = n_restarts_optimizer
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
+
     def _kernel_parts(self, X, Y):
-        delta = X[:, None, :]- Y[None, :, :]
-        r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
+        """
+        
+        """
+        delta = X[:, None, :] - Y[None, :, :]
+        r = np.sqrt(np.sum((delta / self.lengthscales_) ** 2, axis=2))
         return delta, r
 
+
     def _K(self, X, Y):
+        """
+        Returns covariance matrix K.
+        """
         _, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) 
                 * np.exp(-a * r))
 
+
     def _dK_dx(self, X, Y, dim):
+        """
+        Returns .
+        """
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         factor = -(5.0/3.0) * self.variance_ * (1.0 + a * r) * np.exp(-a * r)
+
         return factor * delta[:, :, dim] / self.lengthscales_[dim] ** 2
 
+
     def _dK_dy(self, X, Y, dim):
+        """
+        Returns dK_dy.
+        """
         return -self._dK_dx(X, Y, dim)
 
+
     def _d2K_dxdy(self, X, Y, dim_x, dim_y):
+        """
+        Returns .
+        """
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         lx = self.lengthscales_[dim_x]
@@ -64,7 +112,11 @@ class MonotoneGPFluxST:
         outer = (25.0/3.0) * delta[:, :, dim_x] * delta[:, :, dim_y]/(lx**2 * ly**2)
         return self.variance_ * np.exp(-a * r) * (diagonal - outer)
 
+
     def _posterior(self, L, tau, eta):
+        """
+        
+        """
         n = L.shape[0]
         B = np.eye(n) + L.T @ (tau[:, None] * L)
         C = np.linalg.cholesky(B)
@@ -75,7 +127,11 @@ class MonotoneGPFluxST:
         alpha = eta - tau * mean
         return mean, variance, alpha
 
+
     def _run_ep(self, K, y, noise_variance):
+        """
+        
+        """
         n = y.size
         m = K.shape[0] - n
         L = np.linalg.cholesky(K + self.jitter * np.eye(K.shape[0]))
@@ -119,23 +175,32 @@ class MonotoneGPFluxST:
         self.ep_iterations_ = iteration + 1
         return self._posterior(L, tau, eta)[2]
 
+
     def fit(self, s_train, T_train, q_train, *, noise_std=0.0):
+        """
+
+        """
         s = np.asarray(s_train, dtype=float).reshape(-1)
         T = np.asarray(T_train, dtype=float).reshape(-1)
         q = np.asarray(q_train, dtype=float).reshape(-1)
         if not (s.size == T.size == q.size):
             raise ValueError("Training arrays must have the same length.")
+        
         X_raw = np.column_stack([s, T])
         latent_raw = -q if self.learn_neg_flux else q
+
         self.x_mean_ = X_raw.mean(axis=0)
         self.x_scale_ = X_raw.std(axis=0)
         self.x_scale_[self.x_scale_ == 0.0] = 1.0
+
         self.y_mean_ = latent_raw.mean()
         self.y_scale_ = latent_raw.std()
         if self.y_scale_ == 0.0:
             self.y_scale_ = 1.0
+
         X = (X_raw - self.x_mean_) / self.x_scale_
         y = (latent_raw - self.y_mean_) / self.y_scale_
+
         sigma = np.asarray(noise_std, dtype=float).reshape(-1)
         if sigma.size == 1:
             sigma = np.full(y.size, sigma.item())
@@ -143,6 +208,7 @@ class MonotoneGPFluxST:
             raise ValueError("noise_std must be scalar or match the training data.")
         if np.any(sigma < 0.0):
             raise ValueError("noise_std must be nonnegative.")
+        
         noise_variance = np.maximum((sigma / self.y_scale_) ** 2, self.jitter)
         sklearn_kernel = ConstantKernel(1.0, (1e-4, 1e4)) * Matern(
             length_scale=np.ones(2),
@@ -157,8 +223,10 @@ class MonotoneGPFluxST:
             random_state=0,
         )
         gp.fit(X, y)
+
         self.variance_ = float(gp.kernel_.k1.constant_value)
         self.lengthscales_ = np.asarray(gp.kernel_.k2.length_scale, dtype=float)
+
         s_axis = np.linspace(X[:, 0].min(), X[:, 0].max(), self.n_virtual_per_axis)
         T_axis = np.linspace(X[:, 1].min(), X[:, 1].max(), self.n_virtual_per_axis)
         S, TT = np.meshgrid(s_axis, T_axis, indexing="ij")
@@ -168,29 +236,40 @@ class MonotoneGPFluxST:
         Kgg = self._d2K_dxdy(Z, Z, 0, 0)
         K = np.block([[Kff, Kfg], [Kfg.T, Kgg]])
         K = 0.5 * (K + K.T)
+
         self.X_train_ = X
         self.X_virtual_ = Z
         self.joint_condition_ = np.linalg.cond(K)
         self.alpha_ = self._run_ep(K, y, noise_variance)
         self.alpha_norm_ = np.linalg.norm(self.alpha_)
+
         return self
+
     
     def evaluate(self, s_q, T_q):
+        """
+
+        """
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         shape = s.shape
+
         X_raw = np.column_stack([s.ravel(), T.ravel()])
         X = (X_raw - self.x_mean_) / self.x_scale_
         value_covariance = np.hstack([self._K(X, self.X_train_), self._dK_dy(X, self.X_virtual_, 0)])
+
         latent = value_covariance @ self.alpha_
         gradient = np.empty((X.shape[0], 2))
+
         for dim in range(2):
             derivative_covariance = np.hstack([self._dK_dx(X, self.X_train_, dim),
                                                self._d2K_dxdy(X, self.X_virtual_, dim, 0)])
             gradient[:, dim] = derivative_covariance @ self.alpha_
+
         latent = self.y_mean_ + self.y_scale_ * latent
         gradient = self.y_scale_ * gradient / self.x_scale_
         sign = -1.0 if self.learn_neg_flux else 1.0
         q = sign * latent
         dq_ds = sign * gradient[:, 0]
         dq_dT = sign * gradient[:, 1]
+
         return q.reshape(shape), dq_ds.reshape(shape), dq_dT.reshape(shape)

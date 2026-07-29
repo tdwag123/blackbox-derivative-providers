@@ -34,7 +34,7 @@ except (ImportError, OSError):
     RFFDerivativeProviderST = None
 
 try:
-    from Methods.OracleDataMethods.monotoneGP import MonotoneGPFluxST
+    from Methods.OracleDataMethods.GP.monotoneGPReg import MonotoneGPFluxST
 except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
 # -----------------------------------------------------------------------------------------------------------------------

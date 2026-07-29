@@ -193,9 +193,7 @@ class MonotoneGPFluxST:
         self.log_marginal_likelihood_ = float(gp.log_marginal_likelihood_value_)
         # reg function should not dominate learned observation noise
         if self.reg_function >= self.learned_noise_variance_:
-            raise ValueError("reg function must be smaller than learned noise variance:"
-                             f"reg_function={self.reg_function:.3e}," 
-                             f"learned_noise_variance={self.learned_noise_variance:.3e}")
+            self.reg_function = self.reg_function * self.learned_noise_variance_
         s_axis = np.linspace(X[:, 0].min(), X[:, 0].max(), self.n_virtual_per_axis)
         T_axis = np.linspace(X[:, 1].min(), X[:, 1].max(), self.n_virtual_per_axis)
         S, TT = np.meshgrid(s_axis, T_axis, indexing="ij")
