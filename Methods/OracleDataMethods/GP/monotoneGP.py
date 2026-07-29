@@ -17,7 +17,10 @@ class MonotoneGPFluxST:
 
     n_virtual_per_axis: number of virtual points.
 
-    probit_nu:
+    probit_nu: strictness of monotonicity. 
+        small -> nearly hard monotonicity; large -> softer monotonicity.
+        too small -> EP may become numerically difficult.
+        too large -> Model may tolerate noticable violations.
 
     ep_max_iter: max number of EP iterations. 
 
@@ -28,7 +31,10 @@ class MonotoneGPFluxST:
 
     jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I.
 
-    n_restarts_optimizer:
+    n_restarts_optimizer: extra attempts to tune GP(?)
+        if 0, runs once from default starting point. 
+        if 2, one initial run + 2 optimizations from different starting points = 3 runs.
+        uses same training data with different kernel hyperparameters each time.
     """
     def __init__(
         self,
