@@ -56,9 +56,8 @@ class AdaptiveBBOptions:
     samples_per_region: int = 21
     cache_size: int = 60
 
-    # Non-GP methods create at most this many regional surrogate models. Before
-    # this limit is reached, each new region gets its own fit; after that, the
-    # nearest existing region is reused.
+    # Non-GP methods create at most this many regional surrogate models. Before this limit is reached, 
+    # each new region gets its own fit; after that, the nearest existing region is reused.
     max_refinements_per_eval: int = 0
     rng_seed: int = 0
     max_stencil_states: int = 5
