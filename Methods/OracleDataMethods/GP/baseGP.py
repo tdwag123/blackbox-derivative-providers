@@ -20,7 +20,7 @@ class GPFluxST:
         noise_std=0.0,
         learn_neg_flux=True,
         jitter=1e-8,
-        n_restarts_optimizer=5,
+        n_restarts_optimizer=0,
         reg_function=0.0,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
