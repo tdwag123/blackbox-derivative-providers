@@ -44,8 +44,8 @@ STATE_DIM = 2
 
 @dataclass
 class AdaptiveBBOptions: 
-    # Physical state bounds used to keep random samples inside the oracle domain. Provider scales 
-    # these bounds to roughly [-1, 1]^2 before measuring radii so s, T don't dominate each other just bc of units.
+    # Physical state bounds used to keep random samples inside the oracle domain. Provider scales these 
+    # bounds to roughly [-1, 1]^2 before measuring radii so s, T don't dominate each other just bc of units.
     s_bounds: tuple = (-6.0, 12.0)
     T_bounds: tuple = (0.0, 15.0)
 
@@ -75,8 +75,7 @@ class AdaptiveBBOptions:
     # before duplicate checks and lru_cache lookup.
     oracle_key_decimals: int = 12
 
-    # GP-like methods use predictive variance. Non-GP methods use stencil
-    # geometry only.
+    # GP-like methods use predictive variance. Non-GP methods use stencil geometry only.
     variance_tolerance: float = 2.5e-3
 
     # Sampling ball is at least twice the FEM spacing
