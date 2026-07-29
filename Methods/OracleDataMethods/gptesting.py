@@ -2,6 +2,9 @@
 Testing setup for preliminary GP troubleshoots. 
 - includes regularization sweeps, plots reconstructed flux and derivatives
 
+MUST DO: 
+* update so compatible with regularized versions of code 
+
 """
 import numpy as np
 import matplotlib.pyplot as plt

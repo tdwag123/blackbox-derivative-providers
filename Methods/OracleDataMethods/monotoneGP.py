@@ -1,9 +1,7 @@
 """
 MUST DO:
 * dynamic virtual updates, look more at Minka paper 
---> YAY I have an idea about how to do this, it will have to do with the hyperparameter tuning 
-stuff i talk about in monotoneGPReg starter comments
-
+* use white kernel here too (see regularized version for how)
 """
 
 import numpy as np

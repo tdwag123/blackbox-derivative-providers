@@ -1,10 +1,12 @@
 """
 MUST DO:
-* test out the regularization here
 * dynamic virtual updates, look more at Minka paper 
-* look more at using EP evidence for effiient hyperparameter optimization
+* look more at using EP evidence for efficient hyperparameter optimization
 --> in fact, look at the Minka paper to understand interleaved hyperparameter updates
+* consider a different type of regularization/penalty that penalizes a quadratic form 
+wrt the latent vector
 
+DONE: 
 ** for regularization, see tracy's email
 use WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10, 1e1)), 
 set alpha=jitter in GPRegressor
