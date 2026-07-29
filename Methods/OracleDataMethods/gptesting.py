@@ -120,7 +120,7 @@ def evaluate_model(name, model, fit_time, S, TT, regularization_strength, regula
         "dq_ds_rmse": rmse(dq_ds_pred, exact_dq_ds(S,TT)),
         "dq_dT_rmse": rmse(dq_dT_pred, exact_dq_dT(S, TT)),
         "violation_percent": 100.0 * float(np.mean(dq_ds_pred > 0.0)),
-        "worst_dq_ds": float(np.max(positive_violation)), 
+        "worst_violation": float(np.max(positive_violation)), 
         "condition_number": condition_number, 
         "alpha_norm": alpha_norm,
         "learned_noise_variance_standardized": float(model.learned_noise_variance_),
