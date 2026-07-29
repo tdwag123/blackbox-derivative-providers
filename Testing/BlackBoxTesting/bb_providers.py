@@ -118,7 +118,8 @@ class AdaptiveBBOptions:
 
     # "hybrid" gives a small structured stencil first, then fills the rest with
     # random ball samples. Use "random" if you want purely random sampling.
-    design: str = "random"
+    # Options: "axis", "random", "hybrid"
+    design: str = "axis"
     include_center: bool = True
 
     # Exact floating-point equality is unreliable, so oracle inputs are rounded
@@ -127,7 +128,7 @@ class AdaptiveBBOptions:
 
     # GP-like methods use predictive variance. Non-GP methods use normalized
     # training MSE on cached points near the current query point.
-    mse_tolerance: float = 2.0e-1
+    mse_tolerance: float = 2.0e-2
     variance_tolerance: float = 2.5e-3
 
     # Enforce your rule that the sampling ball is at least twice the FEM spacing.
@@ -407,7 +408,7 @@ class AdaptiveBlackBoxProvider:
         # small active cache, the default ridge is deliberately not tiny; the
         # high-noise sweeps favored about 1e-3 over the older 1e-4 default.
         if self.method_key in {"bb_rbf", "bb_krr", "bb_rbf_krr"}:
-            epsilon = self.model_options.get("epsilon", None)
+            epsilon = self.model_options.get("epsilon", 0.3)
             ridge = self.model_options.get("ridge_strength", 1.0e-3)
             return KernelDerivativeProviderST(
                 X_scaled[:, 0],
@@ -421,7 +422,7 @@ class AdaptiveBlackBoxProvider:
         # Same KRR machinery, but with a Matern 5/2 kernel. The same low-sample
         # ridge default is used here; larger values oversmoothed in the sweeps.
         if self.method_key in {"bb_matern52_krr", "bb_matern_krr"}:
-            epsilon = self.model_options.get("epsilon", None)
+            epsilon = self.model_options.get("epsilon", 0.3)
             ridge = self.model_options.get("ridge_strength", 1.0e-3)
             return KernelDerivativeProviderST(
                 X_scaled[:, 0],
@@ -706,6 +707,13 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         x_mesh = np.asarray(x_mesh, dtype=float)
         mesh_spacing = float(np.median(np.diff(x_mesh)))
 
+    # Method-specific adaptive defaults. RBF benefited from allowing one
+    # calibrated refinement round; RFF timed out under that same rule, so keep it
+    # conservative unless the method string explicitly overrides these.
+    default_max_refinements = AdaptiveBBOptions.max_refinements_per_eval
+    if method_key in {"bb_rbf", "bb_krr", "bb_rbf_krr"}:
+        default_max_refinements = 1
+
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
         sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
@@ -724,7 +732,7 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         refill_points=method_options.get("refill_points", AdaptiveBBOptions.refill_points),
         max_refinements_per_eval=method_options.get(
             "max_refinements_per_eval",
-            AdaptiveBBOptions.max_refinements_per_eval,
+            default_max_refinements,
         ),
         rng_seed=method_options.get("rng_seed", seed),
         design=method_options.get("design", AdaptiveBBOptions.design),
