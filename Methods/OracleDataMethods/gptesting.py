@@ -2,7 +2,7 @@
 Testing setup for preliminary GP troubleshoots. 
 - includes regularization sweeps, plots reconstructed flux and derivatives
 
-MUST DO: 
+DONE: 
 * update so compatible with regularized versions of code 
 
 """
@@ -17,9 +17,9 @@ from monotoneGPReg import MonotoneGPFluxST
 
 # EXPERIMENT CONTROLS
 seed = 42
-n_train  = 15
+n_train  = 50
 true_noise_std = 0.20 # learned noise level should match this 
-n_virt = 10
+n_virt = 50
 
 # func reg def as fraction of standardized noise var learned by WhiteKernel
 regularization_fractions = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1]
