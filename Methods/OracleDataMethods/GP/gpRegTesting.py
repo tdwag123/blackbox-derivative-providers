@@ -25,7 +25,7 @@ true_noise_std = 0.20 # learned noise level should match this
 n_virt = 50
 
 # func reg def as fraction of standardized noise var learned by WhiteKernel
-function_regularization_strengths = [0.0]
+function_regularization_fractions = [0.0]
 derivative_regularization_strengths = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1, 0.0]
 
 OUTPUT_DIR = Path(__file__).resolve().parent/"GPDerivRegSweepResults(n_train=50, n_virt=50)"
@@ -76,18 +76,80 @@ def make_training_data():
     q_train = q_true + rng.normal(0.0, true_noise_std, n_train)
     return s_train, T_train, q_train
 
-def regularization_cases():
-    return[(float(reg_function), float(reg_derivative)) for reg_function in function_regularization_strengths 
-           for reg_derivative in derivative_regularization_strengths]
+def case_key(function_fraction, derivative_strength):
+    return float(function_fraction), float(derivative_strength)
 
-def case_label(reg_function, reg_derivative):
-    if reg_function == 0.0 and reg_derivative == 0.0:
+
+def case_type(function_strength, derivative_strength):
+    if function_strength == 0.0 and derivative_strength == 0.0:
         return "unregularized"
-    if reg_function == 0.0:
-        return f"derivative-only={reg_derivative:.0e}"
-    if reg_derivative == 0.0:
-        return f"function-only={reg_function:.0e}"
-    return f"function={reg_function:.0e}, derivative={reg_derivative:.0e}"
+    if function_strength == 0.0:
+        return "derivative-only"
+    if derivative_strength == 0.0:
+        return "function-only"
+    return "joint"
+
+
+def case_label(function_fraction, function_strength, derivative_strength):
+    kind = case_type(function_strength, derivative_strength)
+
+    if kind == "unregularized":
+        return "unregularized"
+    if kind == "derivative-only":
+        return f"derivative-only: lambda_d={derivative_strength:.0e}"
+    if kind == "function-only":
+        return (
+            f"function-only: lambda_f={function_strength:.0e} "
+            f"({function_fraction:.0e} noise)"
+        )
+    return (
+        f"lambda_f={function_strength:.0e} "
+        f"({function_fraction:.0e} noise), "
+        f"lambda_d={derivative_strength:.0e}"
+    )
+
+
+def plot_case_label(function_fraction, derivative_strength):
+    if function_fraction == 0.0:
+        return f"f=0, d={derivative_strength:.0e}"
+    return f"f/noise={function_fraction:.0e}, d={derivative_strength:.0e}"
+
+
+def build_regularization_cases(learned_noise_variance):
+    learned_noise_variance = float(learned_noise_variance)
+    if not np.isfinite(learned_noise_variance) or learned_noise_variance <= 0.0:
+        raise ValueError("learned_noise_variance must be positive and finite")
+
+    cases = []
+
+    for fraction in function_regularization_fractions:
+        fraction = float(fraction)
+        if not np.isfinite(fraction) or not 0.0 <= fraction < 1.0:
+            raise ValueError(
+                "function regularization fractions must satisfy 0 <= fraction < 1"
+            )
+
+        function_strength = fraction * learned_noise_variance
+
+        for derivative_strength in derivative_regularization_strengths:
+            derivative_strength = float(derivative_strength)
+            if not np.isfinite(derivative_strength) or derivative_strength < 0.0:
+                raise ValueError(
+                    "derivative regularization strengths must be finite and nonnegative"
+                )
+
+            if function_strength == 0.0 and derivative_strength == 0.0:
+                continue
+
+            cases.append(
+                {
+                    "function_fraction": fraction,
+                    "function_strength": float(function_strength),
+                    "derivative_strength": derivative_strength,
+                }
+            )
+
+    return cases
 
 # MODEL FITTING
 def fit_model(s_train, T_train, q_train, reg_function, reg_derivative):
@@ -96,8 +158,8 @@ def fit_model(s_train, T_train, q_train, reg_function, reg_derivative):
         s_train, 
         T_train, 
         q_train, 
-        reg_function=reg_function,
-        reg_derivative=reg_derivative,
+        reg_function=float(reg_function),
+        reg_derivative=float(reg_derivative),
         **common_model_arguments(),
     )
     fit_time = time.perf_counter() - start
@@ -106,42 +168,57 @@ def fit_model(s_train, T_train, q_train, reg_function, reg_derivative):
 def run_regularization_sweep(s_train, T_train, q_train, learned_noise_variance):
     models = {}
     fit_times = {}
-    function_strengths = [fraction * learned_noise_variance 
-                 for fraction in function_regularization_strengths]
-    derivative_strengths = derivative_regularization_strengths
-    for fraction, function_strength, derivative_strength in zip(function_regularization_strengths, function_strengths, derivative_strengths):
-        print(f"Fitting regularized model with funcLambda = {function_strength:.1e}, ({fraction:.3e} * learned noise variance),"
-              f"and derivLambda = {derivative_strength:.1e}")
-        model, fit_time = fit_model(s_train, T_train, q_train, reg_function=float(function_strength), reg_derivative=float(derivative_strength))
-        models[float(function_strength), float(derivative_strength)] = model
-        fit_times[float(function_strength), float(derivative_strength)] = fit_time
-    return models, fit_times, function_strengths, derivative_strengths
+    cases = build_regularization_cases(learned_noise_variance)
+    for case in cases:
+        function_fraction = case["function_fraction"]
+        function_strength = case["function_strength"]
+        derivative_strength = case["derivative_strength"]
+        key = case_key(function_fraction, derivative_strength)
 
-# NEED UPDATES THIS POINT ONWARDS SINCE I'VE DEFINED MY SWEEPS AS ABOVE 
+        print(
+            "Fitting model with "
+            f"lambda_f={function_strength:.3e} "
+            f"({function_fraction:.3e} * learned noise variance), "
+            f"lambda_d={derivative_strength:.3e}"
+        )
+
+        model, fit_time = fit_model(
+            s_train,
+            T_train,
+            q_train,
+            reg_function=function_strength,
+            reg_derivative=derivative_strength,
+        )
+
+        models[key] = model
+        fit_times[key] = fit_time
+
+    return models, fit_times, cases
 
 # MODEL EVALUATION
-def evaluate_model(name, model, fit_time, S, TT, regularization_fraction, function_strength, derivative_strength):
+def evaluate_model(name, model, fit_time, S, TT, function_fraction, function_strength, derivative_strength):
     q_pred, dq_ds_pred, dq_dT_pred = model.evaluate(S, TT)
     condition_number, alpha_norm = diagnostics(model)
     positive_violation = np.maximum(dq_ds_pred, 0.0)
-    return{
+    return {
         "name": name,
-        "function_regularization_strength": function_strength,
-        "function_regularization_fraction_of_noise": regularization_fraction,
-        "derivative_regularization_strength": derivative_strength,
-        "q_rmse": rmse(q_pred, exact_flux(S,TT)),
-        "dq_ds_rmse": rmse(dq_ds_pred, exact_dq_ds(S,TT)),
+        "case_type": case_type(function_strength, derivative_strength),
+        "function_regularization_fraction_of_noise": float(function_fraction),
+        "function_regularization_strength": float(function_strength),
+        "derivative_regularization_strength": float(derivative_strength),
+        "q_rmse": rmse(q_pred, exact_flux(S, TT)),
+        "dq_ds_rmse": rmse(dq_ds_pred, exact_dq_ds(S, TT)),
         "dq_dT_rmse": rmse(dq_dT_pred, exact_dq_dT(S, TT)),
         "violation_percent": 100.0 * float(np.mean(dq_ds_pred > 0.0)),
-        "worst_violation": float(np.max(positive_violation)), 
-        "condition_number": condition_number, 
+        "worst_violation": float(np.max(positive_violation)),
+        "condition_number": condition_number,
         "alpha_norm": alpha_norm,
         "learned_noise_variance_standardized": float(model.learned_noise_variance_),
         "learned_noise_std_physical": float(model.learned_noise_std_physical_),
-        "fit_seconds": fit_time,
+        "fit_seconds": float(fit_time),
     }
 
-def evaluate_all_models(unregularized_model, unregularized_fit_time, regularized_models, regularized_fit_times, strengths, S, TT):
+def evaluate_all_models(unregularized_model, unregularized_fit_time, regularized_models, regularized_fit_times, cases, S, TT):
     results = [evaluate_model(name="unregularized", 
                               model=unregularized_model, 
                               fit_time=unregularized_fit_time,
@@ -149,17 +226,26 @@ def evaluate_all_models(unregularized_model, unregularized_fit_time, regularized
                               TT=TT,
                               regularization_strength=0.0, 
                               regularization_fraction=0.0)]
-    for fraction, strength in zip(regularization_fractions, strengths):
-        strength = float(strength)
+    for case in cases:
+        function_fraction = case["function_fraction"]
+        function_strength = case["function_strength"]
+        derivative_strength = case["derivative_strength"]
+        key = case_key(function_fraction, derivative_strength)
+
         results.append(
             evaluate_model(
-                name=f"reg={strength:.1e}",
-                model=regularized_models[strength],
-                fit_time=regularized_fit_times[strength],
+                name=case_label(
+                    function_fraction,
+                    function_strength,
+                    derivative_strength,
+                ),
+                model=regularized_models[key],
+                fit_time=regularized_fit_times[key],
                 S=S,
                 TT=TT,
-                regularization_strength=strength,
-                regularization_fraction=float(fraction),
+                function_fraction=function_fraction,
+                function_strength=function_strength,
+                derivative_strength=derivative_strength,
             )
         )
 
@@ -175,30 +261,33 @@ def print_noise_summary(model):
 
 def print_report(results):
     header = (
-        f"{'model':<16}"
-        f"{'strength':>12}"
-        f"{'reg/noise':>12}"
+        f"{'model':<42}"
+        f"{'lambda_f':>12}"
+        f"{'f/noise':>11}"
+        f"{'lambda_d':>12}"
         f"{'q RMSE':>12}"
         f"{'dq/ds RMSE':>14}"
         f"{'dq/dT RMSE':>14}"
-        f"{'viol. %':>11}"
+        f"{'viol. %':>10}"
         f"{'worst viol.':>14}"
         f"{'condition no.':>16}"
         f"{'alpha norm':>15}"
         f"{'fit s':>10}"
     )
+
     print("\n" + header)
     print("-" * len(header))
 
     for result in results:
         print(
-            f"{result['name']:<16}"
-            f"{result['regularization_strength']:>12.3e}"
-            f"{result['regularization_fraction_of_noise']:>12.3e}"
+            f"{result['name']:<42}"
+            f"{result['function_regularization_strength']:>12.3e}"
+            f"{result['function_regularization_fraction_of_noise']:>11.3e}"
+            f"{result['derivative_regularization_strength']:>12.3e}"
             f"{result['q_rmse']:>12.5e}"
             f"{result['dq_ds_rmse']:>14.5g}"
             f"{result['dq_dT_rmse']:>14.5g}"
-            f"{result['violation_percent']:>11.3f}"
+            f"{result['violation_percent']:>10.3f}"
             f"{result['worst_violation']:>14.5e}"
             f"{result['condition_number']:>16.5e}"
             f"{result['alpha_norm']:>15.5e}"
@@ -208,12 +297,14 @@ def print_report(results):
 
 def save_report(results):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = OUTPUT_DIR / "regularization_sweep_metrics.csv"
+    output_path = OUTPUT_DIR / "regularization_component_sweep_metrics.csv"
 
     fieldnames = [
         "name",
-        "regularization_strength",
-        "regularization_fraction_of_noise",
+        "case_type",
+        "function_regularization_fraction_of_noise",
+        "function_regularization_strength",
+        "derivative_regularization_strength",
         "q_rmse",
         "dq_ds_rmse",
         "dq_dT_rmse",
@@ -236,43 +327,36 @@ def save_report(results):
 
 def print_best_models(results):
     regularized_results = [
-        result
-        for result in results
-        if result["regularization_strength"] > 0.0
+        result for result in results if result["case_type"] != "unregularized"
     ]
 
-    best_q = min(regularized_results, key=lambda result: result["q_rmse"])
-    best_dq_ds = min(
-        regularized_results,
-        key=lambda result: result["dq_ds_rmse"],
-    )
-    best_dq_dT = min(
-        regularized_results,
-        key=lambda result: result["dq_dT_rmse"],
-    )
+    if not regularized_results:
+        print("\nNo nonzero regularization cases were requested.")
+        return
+
+    best_metrics = [
+        ("Flux reconstruction", "q_rmse"),
+        ("dq/ds reconstruction", "dq_ds_rmse"),
+        ("dq/dT reconstruction", "dq_dT_rmse"),
+    ]
 
     print("\nBest regularized models")
-    print(
-        "Flux reconstruction: "
-        f"reg/noise={best_q['regularization_fraction_of_noise']:.3e} "
-        f"(RMSE={best_q['q_rmse']:.6g})"
-    )
-    print(
-        "dq/ds reconstruction: "
-        f"reg/noise={best_dq_ds['regularization_fraction_of_noise']:.3e} "
-        f"(RMSE={best_dq_ds['dq_ds_rmse']:.6g})"
-    )
-    print(
-        "dq/dT reconstruction: "
-        f"reg/noise={best_dq_dT['regularization_fraction_of_noise']:.3e} "
-        f"(RMSE={best_dq_dT['dq_dT_rmse']:.6g})"
-    )
+
+    for title, metric in best_metrics:
+        best = min(regularized_results, key=lambda result: result[metric])
+        print(
+            f"{title}: "
+            f"lambda_f={best['function_regularization_strength']:.3e}, "
+            f"f/noise={best['function_regularization_fraction_of_noise']:.3e}, "
+            f"lambda_d={best['derivative_regularization_strength']:.3e} "
+            f"({metric}={best[metric]:.6g})"
+        )
 
 # RECONSTRUCTION PLOTS
 def make_reconstruction_plots(
     unregularized_model,
     regularized_models,
-    strengths,
+    cases,
     s_train,
     T_train,
     q_train,
@@ -301,16 +385,21 @@ def make_reconstruction_plots(
         q_unreg, _, _ = unregularized_model.evaluate(s_line, T_line)
         ax.plot(s_line, q_unreg, linewidth=2.0, label="Unregularized")
 
-        for fraction, strength in zip(regularization_fractions, strengths):
-            model = regularized_models[float(strength)]
+        for case in cases:
+            function_fraction = case["function_fraction"]
+            derivative_strength = case["derivative_strength"]
+            key = case_key(function_fraction, derivative_strength)
+            model = regularized_models[key]
+
             q_reg, _, _ = model.evaluate(s_line, T_line)
             ax.plot(
                 s_line,
                 q_reg,
                 linewidth=1.2,
                 alpha=0.75,
-                label=f"reg/noise={fraction:.0e}",
+                label=plot_case_label(function_fraction, derivative_strength),
             )
+
 
         near = np.abs(T_train - temperature) < 0.12
         ax.scatter(
@@ -359,15 +448,19 @@ def make_reconstruction_plots(
             label="Unregularized",
         )
 
-        for fraction, strength in zip(regularization_fractions, strengths):
-            model = regularized_models[float(strength)]
+        for case in cases:
+            function_fraction = case["function_fraction"]
+            derivative_strength = case["derivative_strength"]
+            key = case_key(function_fraction, derivative_strength)
+            model = regularized_models[key]
+
             _, dq_ds_reg, _ = model.evaluate(s_line, T_line)
             ax.plot(
                 s_line,
                 dq_ds_reg,
                 linewidth=1.2,
                 alpha=0.75,
-                label=f"reg/noise={fraction:.0e}",
+                label=plot_case_label(function_fraction, derivative_strength),
             )
 
         ax.axhline(0.0, linewidth=1.0)
@@ -386,145 +479,174 @@ def make_reconstruction_plots(
     plt.close(fig)
 
 # REG SWEEP PLOTS
-def make_sweep_plots(results):
+def _derivative_axis_linthresh(results):
+    positive = [
+        result["derivative_regularization_strength"]
+        for result in results
+        if result["derivative_regularization_strength"] > 0.0
+    ]
+    return min(positive) / 10.0 if positive else 1e-12
+
+
+def make_metric_sweep_plot(
+    results,
+    metric,
+    ylabel,
+    title,
+    filename,
+    *,
+    log_y=False,
+):
+    """
+    Plot a metric against lambda_d, with one curve for each function level.
+
+    This representation remains valid for a derivative-only sweep
+    (function fraction = 0) and for a full two-dimensional regularization grid.
+    """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    unregularized_result = next(
-        result
-        for result in results
-        if result["regularization_strength"] == 0.0
+    baseline = next(
+        result for result in results if result["case_type"] == "unregularized"
     )
     regularized_results = [
-        result
-        for result in results
-        if result["regularization_strength"] > 0.0
+        result for result in results if result["case_type"] != "unregularized"
     ]
 
-    fractions = np.asarray(
-        [
-            result["regularization_fraction_of_noise"]
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    function_fractions = sorted(
+        {
+            result["function_regularization_fraction_of_noise"]
             for result in regularized_results
-        ],
-        dtype=float,
+        }
     )
 
-    fig = plt.figure(figsize=(8, 5))
-    plt.semilogx(
-        fractions,
-        [result["q_rmse"] for result in regularized_results],
-        marker="o",
-        label="q RMSE",
-    )
-    plt.semilogx(
-        fractions,
-        [result["dq_ds_rmse"] for result in regularized_results],
-        marker="o",
-        label="dq/ds RMSE",
-    )
-    plt.semilogx(
-        fractions,
-        [result["dq_dT_rmse"] for result in regularized_results],
-        marker="o",
-        label="dq/dT RMSE",
-    )
-    plt.axhline(
-        unregularized_result["q_rmse"],
+    for fraction in function_fractions:
+        group = [
+            result
+            for result in regularized_results
+            if result["function_regularization_fraction_of_noise"] == fraction
+        ]
+        group.sort(key=lambda result: result["derivative_regularization_strength"])
+
+        x = np.asarray(
+            [result["derivative_regularization_strength"] for result in group],
+            dtype=float,
+        )
+        y = np.asarray([result[metric] for result in group], dtype=float)
+
+        finite = np.isfinite(x) & np.isfinite(y)
+        if log_y:
+            finite &= y > 0.0
+
+        if np.any(finite):
+            ax.plot(
+                x[finite],
+                y[finite],
+                marker="o",
+                label=f"lambda_f/noise={fraction:.0e}",
+            )
+
+    ax.axhline(
+        baseline[metric],
         linestyle="--",
-        label="Unregularized q RMSE",
+        label="zero-regularization baseline",
     )
-    plt.axhline(
-        unregularized_result["dq_ds_rmse"],
-        linestyle="--",
-        label="Unregularized dq/ds RMSE",
-    )
-    plt.axhline(
-        unregularized_result["dq_dT_rmse"],
-        linestyle="--",
-        label="Unregularized dq/dT RMSE",
-    )
-    plt.xlabel("Regularization / learned noise variance")
-    plt.ylabel("RMSE")
-    plt.title("Accuracy versus relative regularization")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(
-        OUTPUT_DIR / "regularization_rmse_sweep.png",
-        dpi=200,
-        bbox_inches="tight",
-    )
+    ax.set_xscale("symlog", linthresh=_derivative_axis_linthresh(results))
+
+    if log_y and baseline[metric] > 0.0:
+        ax.set_yscale("log")
+
+    ax.set_xlabel("Derivative regularization strength, lambda_d")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / filename, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-    fig = plt.figure(figsize=(8, 5))
-    plt.semilogx(
-        fractions,
-        [result["alpha_norm"] for result in regularized_results],
-        marker="o",
-        label="Regularized alpha norm",
-    )
-    plt.axhline(
-        unregularized_result["alpha_norm"],
-        linestyle="--",
-        label="Unregularized alpha norm",
-    )
-    plt.xlabel("Regularization / learned noise variance")
-    plt.ylabel("||alpha||_2")
-    plt.title("Alpha norm versus relative regularization")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(
-        OUTPUT_DIR / "regularization_alpha_norm_sweep.png",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
 
-    fig = plt.figure(figsize=(8, 5))
-    plt.loglog(
-        fractions,
-        [result["condition_number"] for result in regularized_results],
-        marker="o",
-        label="Regularized condition number",
+def make_sweep_plots(results):
+    make_metric_sweep_plot(
+        results,
+        "q_rmse",
+        "q RMSE",
+        "Flux RMSE across function/derivative regularization",
+        "q_rmse_component_sweep.png",
     )
-    plt.axhline(
-        unregularized_result["condition_number"],
-        linestyle="--",
-        label="Unregularized condition number",
+    make_metric_sweep_plot(
+        results,
+        "dq_ds_rmse",
+        "dq/ds RMSE",
+        "Monotone-derivative RMSE across regularization",
+        "dq_ds_rmse_component_sweep.png",
     )
-    plt.xlabel("Regularization / learned noise variance")
-    plt.ylabel("Condition number")
-    plt.title("Condition number versus relative regularization")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(
-        OUTPUT_DIR / "regularization_condition_sweep.png",
-        dpi=200,
-        bbox_inches="tight",
+    make_metric_sweep_plot(
+        results,
+        "dq_dT_rmse",
+        "dq/dT RMSE",
+        "Temperature-derivative RMSE across regularization",
+        "dq_dT_rmse_component_sweep.png",
     )
-    plt.close(fig)
+    make_metric_sweep_plot(
+        results,
+        "violation_percent",
+        "Physical violation percentage",
+        "Positive dq/ds violations across regularization",
+        "violation_percent_component_sweep.png",
+    )
+    make_metric_sweep_plot(
+        results,
+        "worst_violation",
+        "Largest positive dq/ds",
+        "Worst physical monotonicity violation",
+        "worst_violation_component_sweep.png",
+    )
+    make_metric_sweep_plot(
+        results,
+        "alpha_norm",
+        "||alpha||_2",
+        "Alpha norm across function/derivative regularization",
+        "alpha_norm_component_sweep.png",
+        log_y=True,
+    )
+    make_metric_sweep_plot(
+        results,
+        "condition_number",
+        "Condition number",
+        "Joint condition number across regularization",
+        "condition_number_component_sweep.png",
+        log_y=True,
+    )
+    make_metric_sweep_plot(
+        results,
+        "fit_seconds",
+        "Fit time (seconds)",
+        "Fit time across function/derivative regularization",
+        "fit_time_component_sweep.png",
+    )
 
 # MAIN EXPERIMENT
 def main():
     s_train, T_train, q_train = make_training_data()
 
     print("Fitting zero-regularization learned-noise reference")
-    unregularized_model, unregularized_fit_time = fit_unregularized_reference(
+    unregularized_model, unregularized_fit_time = fit_model(
         s_train,
         T_train,
         q_train,
+        reg_function=0.0,
+        reg_derivative=0.0,
     )
 
-    learned_noise_variance = float(
-        unregularized_model.learned_noise_variance_
-    )
+    learned_noise_variance = float(unregularized_model.learned_noise_variance_)
     print_noise_summary(unregularized_model)
 
-    regularized_models, regularized_fit_times, strengths = (
-        run_regularization_sweep(
-            s_train,
-            T_train,
-            q_train,
-            learned_noise_variance,
-        )
+    regularized_models, regularized_fit_times, cases = run_regularization_sweep(
+        s_train,
+        T_train,
+        q_train,
+        learned_noise_variance,
     )
 
     s_test = np.linspace(s_train.min(), s_train.max(), 70)
@@ -536,7 +658,7 @@ def main():
         unregularized_fit_time,
         regularized_models,
         regularized_fit_times,
-        strengths,
+        cases,
         S,
         TT,
     )
@@ -548,7 +670,7 @@ def main():
     make_reconstruction_plots(
         unregularized_model=unregularized_model,
         regularized_models=regularized_models,
-        strengths=strengths,
+        cases=cases,
         s_train=s_train,
         T_train=T_train,
         q_train=q_train,
