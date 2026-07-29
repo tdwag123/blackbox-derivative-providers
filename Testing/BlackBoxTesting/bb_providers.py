@@ -92,8 +92,8 @@ class LocalPolynomialDerivativeProvider:
         return q.reshape(shape), dq_ds.reshape(shape), dq_dT.reshape(shape)
 
 
-@dataclass
-class AdaptiveBBOptions:
+@dataclass # main purpose is storing data
+class AdaptiveBBOptions: 
     # Physical state bounds used to keep random samples inside the oracle domain.
     # The provider scales these bounds to roughly [-1, 1]^2 before measuring
     # radii, so s and T do not dominate each other just because of units.
