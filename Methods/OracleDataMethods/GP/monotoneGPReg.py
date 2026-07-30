@@ -34,7 +34,7 @@ class MonotoneGPFluxST:
         learn_neg_flux=True,
         n_virtual_per_axis=6,
         probit_nu=1e-3,
-        ep_max_iter=60,
+        ep_max_iter=20,
         ep_damping=0.5,
         ep_tol=1e-5,
         jitter=1e-8,
