@@ -501,7 +501,7 @@ def main():
     states = representative_states(problem)
 
     print("Learned physical noise std:", model.learned_noise_std_physical_)
-    print("GP training-system condition number:", model.condition_number_)
+    print("GP training-system condition number:", model.joint_condition_)
 
     rng = np.random.default_rng(seed + 1)
     static_rows = [
