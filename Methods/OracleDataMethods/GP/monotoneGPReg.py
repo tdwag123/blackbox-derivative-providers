@@ -38,9 +38,9 @@ class MonotoneGPFluxST:
         ep_damping=0.5,
         ep_tol=1e-5,
         jitter=1e-8,
-        n_restarts_optimizer=5,  
+        n_restarts_optimizer=0,  
         reg_function=0, 
-        reg_derivative=0,
+        reg_derivative=1e-2,
     ):
         self.learn_neg_flux = learn_neg_flux
         self.n_virtual_per_axis = n_virtual_per_axis
