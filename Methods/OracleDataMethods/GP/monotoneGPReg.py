@@ -18,7 +18,7 @@ override learned noise estimate
 """
 
 import numpy as np
-from scipy.linalg import cho_solve
+from scipy.linalg import cho_solve, solve_triangular
 from scipy.special import log_ndtr
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
@@ -83,7 +83,7 @@ class MonotoneGPFluxST:
         outer = (25.0/3.0) * delta[:, :, dim_x] * delta[:, :, dim_y]/(lx**2 * ly**2)
         return self.variance_ * np.exp(-a * r) * (diagonal - outer)
 
-    def _posterior(self, L, tau, eta):
+    def _posterior(self, L, tau, eta, *, return_cholesky=False):
         n = L.shape[0]
         B = np.eye(n) + L.T @ (tau[:, None] * L)
         C = np.linalg.cholesky(B)
@@ -92,6 +92,8 @@ class MonotoneGPFluxST:
         solved = cho_solve((C, True), L.T, check_finite=False)
         variance = np.sum(L * solved.T, axis=1)
         alpha = eta - tau * mean
+        if return_cholesky:
+            return mean, variance, alpha, C
         return mean, variance, alpha
 
     def _run_ep(self, K, y, noise_variance):
@@ -139,7 +141,15 @@ class MonotoneGPFluxST:
             if change < self.ep_tol:
                 break
         self.ep_iterations_ = iteration + 1
-        return self._posterior(L, tau, eta)[2]
+        posterior_mean, posterior_variance, alpha, C = self._posterior(L, tau, eta, return_cholesky=True)
+        self.ep_site_precision_ = tau.copy()
+        self.ep_site_natural_parameter_ = eta.copy()
+        self.ep_posterior_mean_ = posterior_mean
+        self.ep_posterior_variance_ = posterior_variance
+        self.ep_prior_cholesky_ = L
+        self.ep_whitened_precision_cholesky_ = C
+        return alpha
+       
 
     def fit(self, s_train, T_train, q_train, *, noise_std=0.0):
         s = np.asarray(s_train, dtype=float).reshape(-1)
@@ -220,7 +230,7 @@ class MonotoneGPFluxST:
         self.alpha_norm_ = np.linalg.norm(self.alpha_) 
         return self
         
-    def evaluate(self, s_q, T_q):
+    def evaluate(self, s_q, T_q, return_variance=False):
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         shape = s.shape
         X_raw = np.column_stack([s.ravel(), T.ravel()])
@@ -238,4 +248,20 @@ class MonotoneGPFluxST:
         q = sign * latent
         dq_ds = sign * gradient[:, 0]
         dq_dT = sign * gradient[:, 1]
+
+        if return_variance:
+            prior_projection = solve_triangular(self.ep_prior_cholesky_, 
+                                                value_covariance.T, 
+                                                lower=True, 
+                                                check_finite=False)
+            posterior_projection = solve_triangular(self.ep_whitened_precision_cholesky_, 
+                                                    prior_projection, 
+                                                    lower=True, 
+                                                    check_finite=False)
+            variance_standardized = (self.variance_ 
+                                     - np.sum(prior_projection**2, axis=0)
+                                     + np.sum(posterior_projection**2, axis = 0))
+            variance = self.y_scale_**2 * np.maximum(variance_standardized, 0.0)
+            return q.reshape(shape), dq_ds.reshape(shape), dq_dT.reshape(shape), variance.reshape(shape)
+
         return q.reshape(shape), dq_ds.reshape(shape), dq_dT.reshape(shape)
