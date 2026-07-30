@@ -22,11 +22,17 @@ class GPFluxST:
         jitter=1e-8,
         n_restarts_optimizer=0,
         reg_function=0.0,
+        kernel_variance=1.0,
+        lengthscale=1.0,
+        noise_variance=1.0e-3,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
         self.jitter = float(jitter)
         self.n_restarts_optimizer = int(n_restarts_optimizer)
         self.reg_function = float(reg_function)
+        self.kernel_variance = float(kernel_variance)
+        self.lengthscale = lengthscale
+        self.noise_variance = float(noise_variance)
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
     def _kernel_parts(self, X, Y):
@@ -57,6 +63,10 @@ class GPFluxST:
             raise ValueError("n_restarts_optimizer must be nonnegative.")
         if self.reg_function < 0.0:
             raise ValueError("reg_function must be nonnegative.")
+        if self.kernel_variance <= 0.0:
+            raise ValueError("kernel_variance must be positive.")
+        if self.noise_variance <= 0.0:
+            raise ValueError("noise_variance must be positive.")
         X_raw = np.column_stack([s, T])
         latent_raw = -q if self.learn_neg_flux else q
         self.x_mean_ = X_raw.mean(axis=0)
@@ -77,12 +87,22 @@ class GPFluxST:
         if np.any(sigma < 0.0):
             raise ValueError("noise_std must be nonnegative.")
         self.supplied_noise_variance_standardized_ = (sigma / self.y_scale_) ** 2
-        signal_kernel = ConstantKernel(1.0,(1e-4, 1e4)) * Matern(length_scale=np.ones(2), length_scale_bounds=(1e-2, 1e2), nu=2.5)
+        lengthscale = np.asarray(self.lengthscale, dtype=float)
+        if lengthscale.size == 1:
+            lengthscale = np.full(2, lengthscale.item())
+        if lengthscale.size != 2 or np.any(lengthscale <= 0.0):
+            raise ValueError("lengthscale must be positive scalar or length-2 array.")
+        signal_kernel = ConstantKernel(self.kernel_variance, constant_value_bounds="fixed") * Matern(
+            length_scale=lengthscale,
+            length_scale_bounds="fixed",
+            nu=2.5,
+        )
         fitted_gp = GaussianProcessRegressor(
-            kernel=(signal_kernel + WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10, 1e1))),
+            kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
             alpha=self.jitter,
             normalize_y=False,
-            n_restarts_optimizer=self.n_restarts_optimizer,
+            optimizer=None,
+            n_restarts_optimizer=0,
             random_state=0,
         )
         fitted_gp.fit(X, y)

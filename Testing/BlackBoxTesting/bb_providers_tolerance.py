@@ -490,6 +490,9 @@ class AdaptiveBlackBoxProvider:
                 jitter=self.model_options.get("jitter", 1.0e-8),
                 n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
                 reg_function=self.model_options.get("reg_function", 0.0),
+                kernel_variance=self.model_options.get("kernel_variance", 1.0),
+                lengthscale=self.model_options.get("lengthscale", 1.0),
+                noise_variance=self.model_options.get("noise_variance", 1.0e-3),
             )
 
         # Hook for a monotone GP provider. This currently depends on the
