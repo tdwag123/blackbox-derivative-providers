@@ -112,12 +112,14 @@ class AdaptiveBBOptions:
 
     # d = 2 for this 1D FEM problem because the constitutive state is (s, T).
     # Empty cache starts with 10d points; the active FIFO cache holds 30d points.
+    # Starting full at 30d over-concentrated samples near the first Newton state
+    # and caused failures in the low-noise nonlinear case.
     initial_points_per_dim: int = 30
     max_points_per_dim: int = 30
 
     # When uncertainty is too high, add this many new oracle samples near the
     # current quadrature state, then refit a fresh local surrogate.
-    refill_points: int = 4
+    refill_points: int = 15
     max_refinements_per_eval: int = 0
     rng_seed: int = 0
 
@@ -754,12 +756,6 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         x_mesh = np.asarray(x_mesh, dtype=float)
         mesh_spacing = float(np.median(np.diff(x_mesh)))
 
-    variance_tolerance_default = (
-        0.5
-        if method_key in {"bb_basegp", "bb_matern_gp"}
-        else AdaptiveBBOptions.variance_tolerance
-    )
-
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
         sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
@@ -785,7 +781,7 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         mse_tolerance=method_options.get("mse_tolerance", AdaptiveBBOptions.mse_tolerance),
         variance_tolerance=method_options.get(
             "variance_tolerance",
-            variance_tolerance_default,
+            AdaptiveBBOptions.variance_tolerance,
         ),
         mesh_spacing=mesh_spacing,
     )
