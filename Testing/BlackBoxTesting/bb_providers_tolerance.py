@@ -112,7 +112,7 @@ class AdaptiveBBOptions:
 
     # d = 2 for this 1D FEM problem because the constitutive state is (s, T).
     # Empty cache starts with 10d points; the active FIFO cache holds 30d points.
-    initial_points_per_dim: int = 10
+    initial_points_per_dim: int = 30
     max_points_per_dim: int = 30
 
     # When uncertainty is too high, add this many new oracle samples near the
@@ -318,6 +318,8 @@ class AdaptiveBlackBoxProvider:
         self.surrogate_fit_count = 0
         self.failed_refinements = 0
         self.last_uncertainty = np.nan
+        self.uncertainty_sum = 0.0
+        self.uncertainty_count = 0
         self.last_status = "not_evaluated"
         self.current_surrogate = None
 
@@ -374,7 +376,7 @@ class AdaptiveBlackBoxProvider:
 
         result = self._surrogate_evaluate(self.current_surrogate, point)
         uncertainty = self._uncertainty(self.current_surrogate, point, result)
-        self.last_uncertainty = uncertainty
+        self._record_uncertainty(uncertainty)
 
         if self._uncertainty_is_ok(uncertainty):
             self.last_status = "ok"
@@ -389,7 +391,7 @@ class AdaptiveBlackBoxProvider:
 
             result = self._surrogate_evaluate(self.current_surrogate, point)
             uncertainty = self._uncertainty(self.current_surrogate, point, result)
-            self.last_uncertainty = uncertainty
+            self._record_uncertainty(uncertainty)
             if self._uncertainty_is_ok(uncertainty):
                 self.last_status = "refined_ok"
                 return result[:3]
@@ -397,6 +399,12 @@ class AdaptiveBlackBoxProvider:
         self.failed_refinements += 1
         self.last_status = "max_refinements_uncertain"
         return result[:3]
+
+    def _record_uncertainty(self, uncertainty):
+        self.last_uncertainty = uncertainty
+        if np.isfinite(uncertainty):
+            self.uncertainty_sum += float(uncertainty)
+            self.uncertainty_count += 1
 
     def _fit_surrogate(self):
         s_data, T_data, q_data = self.cache.arrays()
@@ -693,6 +701,11 @@ class AdaptiveBlackBoxProvider:
                 "bb_surrogate_fit_count": self.surrogate_fit_count,
                 "bb_failed_refinements": self.failed_refinements,
                 "bb_last_uncertainty": self.last_uncertainty,
+                "bb_avg_uncertainty": (
+                    self.uncertainty_sum / self.uncertainty_count
+                    if self.uncertainty_count
+                    else np.nan
+                ),
                 "bb_last_status": self.last_status,
                 "bb_sample_radius": self.options.effective_sample_radius,
                 "bb_validation_radius": self.options.validation_radius,
