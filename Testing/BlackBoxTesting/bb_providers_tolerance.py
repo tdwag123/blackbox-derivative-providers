@@ -529,7 +529,7 @@ class AdaptiveBlackBoxProvider:
                 noise_std=self.model_options.get("noise_std", 0.0),
                 n_virtual_per_axis=self.model_options.get("n_virtual_per_axis", 6),
                 probit_nu=self.model_options.get("probit_nu", 1.0e-3),
-                ep_max_iter=self.model_options.get("ep_max_iter", 20),
+                ep_max_iter=self.model_options.get("ep_max_iter", 10),
                 ep_damping=self.model_options.get("ep_damping", 0.5),
                 ep_tol=self.model_options.get("ep_tol", 1.0e-5),
                 jitter=self.model_options.get("jitter", 1.0e-8),
