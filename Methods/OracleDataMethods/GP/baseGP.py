@@ -23,8 +23,8 @@ class GPFluxST:
         n_restarts_optimizer=0,
         reg_function=0.0,
         kernel_variance=1.0,
-        lengthscale=1.0,
-        noise_variance=1.0e-3,
+        lengthscale=2.0,
+        noise_variance=1.0e-2,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
         self.jitter = float(jitter)
