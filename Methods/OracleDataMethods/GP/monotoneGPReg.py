@@ -205,6 +205,8 @@ class MonotoneGPFluxST:
         fitted_white_kernel = gp.kernel_.k2
         self.variance_ = float(fitted_signal_kernel.k1.constant_value)
         self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
+        if self.lengthscales_.size == 1:
+            self.lengthscales_ = np.full(2, float(self.lengthscales_.reshape(-1)[0]))
         self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
         self.learned_noise_std_ = np.sqrt(self.learned_noise_variance_)
         self.ep_observation_noise_variance_ = max(self.learned_noise_variance_, self.jitter)
