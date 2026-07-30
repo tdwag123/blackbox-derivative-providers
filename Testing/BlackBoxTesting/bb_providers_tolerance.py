@@ -194,6 +194,16 @@ def parse_method_spec(method):
                     "ridge_strength",
                     "alpha",
                     "learning_rate",
+                    "noise_std",
+                    "probit_nu",
+                    "ep_damping",
+                    "ep_tol",
+                    "jitter",
+                    "reg_function",
+                    "reg_derivative",
+                    "kernel_variance",
+                    "lengthscale",
+                    "noise_variance",
                 }:
                     options[key] = float(value)
                 elif key in {
@@ -206,6 +216,8 @@ def parse_method_spec(method):
                     "training_iter",
                     "grid_size",
                     "n_virtual_per_axis",
+                    "ep_max_iter",
+                    "n_restarts_optimizer",
                     "degree",
                 }:
                     options[key] = int(value)
@@ -516,7 +528,17 @@ class AdaptiveBlackBoxProvider:
                 q_data,
                 noise_std=self.model_options.get("noise_std", 0.0),
                 n_virtual_per_axis=self.model_options.get("n_virtual_per_axis", 6),
-                n_restarts_optimizer=0,
+                probit_nu=self.model_options.get("probit_nu", 1.0e-3),
+                ep_max_iter=self.model_options.get("ep_max_iter", 60),
+                ep_damping=self.model_options.get("ep_damping", 0.5),
+                ep_tol=self.model_options.get("ep_tol", 1.0e-5),
+                jitter=self.model_options.get("jitter", 1.0e-8),
+                n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+                reg_function=self.model_options.get("reg_function", 0.0),
+                reg_derivative=self.model_options.get("reg_derivative", 1.0e-2),
+                kernel_variance=self.model_options.get("kernel_variance", 1.0),
+                lengthscale=self.model_options.get("lengthscale", 2.0),
+                noise_variance=self.model_options.get("noise_variance", 1.0e-2),
             )
 
         raise ValueError(f"unknown blackbox method: {self.method_key}")
@@ -591,6 +613,8 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_monotonegp",
+            "bb_materngpmonotone",
         }
 
     def _has_local_coverage(self, point, radius):

@@ -41,6 +41,9 @@ class MonotoneGPFluxST:
         n_restarts_optimizer=0,  
         reg_function=0.0, 
         reg_derivative=1e-2,
+        kernel_variance=1.0,
+        lengthscale=2.0,
+        noise_variance=1.0e-2,
     ):
         self.learn_neg_flux = learn_neg_flux
         self.n_virtual_per_axis = n_virtual_per_axis
@@ -52,6 +55,9 @@ class MonotoneGPFluxST:
         self.n_restarts_optimizer = n_restarts_optimizer
         self.reg_function = reg_function
         self.reg_derivative = reg_derivative
+        self.kernel_variance = float(kernel_variance)
+        self.lengthscale = lengthscale
+        self.noise_variance = float(noise_variance)
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
     def _kernel_parts(self, X, Y):
@@ -176,17 +182,22 @@ class MonotoneGPFluxST:
         if np.any(sigma < 0.0):
             raise ValueError("noise_std must be nonnegative.")
         self.supplied_noise_variance_standardized_ = (sigma/self.y_scale_)**2
-        signal_kernel = ConstantKernel(1.0, (1e-4, 1e4)) * Matern(
-            length_scale=np.ones(2),
-            length_scale_bounds=(1e-2, 1e2),
+        lengthscale = np.asarray(self.lengthscale, dtype=float)
+        signal_kernel = ConstantKernel(self.kernel_variance, constant_value_bounds="fixed") * Matern(
+            length_scale=lengthscale,
+            length_scale_bounds="fixed",
             nu=2.5,
         )
-        sklearn_kernel = signal_kernel + WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10,1e1))
+        sklearn_kernel = signal_kernel + WhiteKernel(
+            noise_level=self.noise_variance,
+            noise_level_bounds="fixed",
+        )
         gp = GaussianProcessRegressor(
             kernel=sklearn_kernel,
             alpha=self.jitter,
             normalize_y=False,
-            n_restarts_optimizer=self.n_restarts_optimizer,
+            optimizer=None,
+            n_restarts_optimizer=0,
             random_state=0,
         )
         gp.fit(X, y)
