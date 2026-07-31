@@ -11,6 +11,22 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 class GPFluxST:
+    """
+    s_train:
+    T_train:
+    q_train:
+    noise_std: assumed std dev of noise in observed flux values q; 0 -> treats observations as exact. larger values smooth data more strongly.
+    learn_neg_flux: if True, learns -q(s,T) instead of q(s,T) to enforce accurate monotonicity constraints.
+    jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I.
+    n_restarts_optimizer: extra attempts to tune GP. 
+        if 0, runs once from default starting point; if 2, one initial run + 2 optimizations from different starting points = 3 runs.
+        uses same training data with different kernel hyperparameters each time.
+    reg_function: 
+    kernel_variance: 
+    lengthscale:
+    noise_variance:
+    """
+
     def __init__(
         self,
         s_train,
@@ -36,25 +52,47 @@ class GPFluxST:
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
     def _kernel_parts(self, X, Y):
+        """
+        Returns delta: coordinate-by-coordinate difference btwn every point in X and every point in Y,
+        and r: pairwise length-scale normalized Euclidean distance btwn every point in X and every point in Y. 
+        """
         delta = X[:, None, :] - Y[None, :, :]
         r = np.sqrt(np.sum((delta / self.lengthscales_) ** 2, axis=2))
         return delta, r
 
     def _K(self, X, Y):
+        """
+        Constructing the covariance matrix / Matern kernel K.
+        """
         _, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) * np.exp(-a * r))
 
+
+    # ---------------------------------------kernel derivatives------------------------------------------------
     def _dK_dx(self, X, Y, dim):
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         factor = (-(5.0 / 3.0) * self.variance_ * (1.0 + a * r) * np.exp(-a * r))
         return (factor * delta[:, :, dim] / self.lengthscales_[dim] ** 2)
+    # --------------------------------------end of kernel derivatives------------------------------------------
+
 
     def fit(self, s_train, T_train, q_train, *, noise_std=0.0):
+        """
+        Fits GP model to training data. Input coordinates, target fluxes standardized before fitting.
+        Depending on learn_neg_flux, either learns q or -q. 
+
+        s_train: training values of s.
+        T_train: training values of the temperature T. 
+        q_train: observed flux values.
+        noise_std: assumed std dev of noise in observed flux values q. retained as diagnostic and not used to
+            construct the fitted covariance matrix. default = 0.0.
+        """
         s = np.asarray(s_train, dtype=float).reshape(-1)
         T = np.asarray(T_train, dtype=float).reshape(-1)
         q = np.asarray(q_train, dtype=float).reshape(-1)
+
         if not (s.size == T.size == q.size):
             raise ValueError("Training arrays must have the same length.")
         if self.jitter <= 0.0:
@@ -67,17 +105,25 @@ class GPFluxST:
             raise ValueError("kernel_variance must be positive.")
         if self.noise_variance <= 0.0:
             raise ValueError("noise_variance must be positive.")
+        
         X_raw = np.column_stack([s, T])
         latent_raw = -q if self.learn_neg_flux else q
+
+        # ----------------------------------- standardization ------------------------------------------
+        # we standardize GP's inputs and target, making each variable roughly zero-mean and unit scale.
         self.x_mean_ = X_raw.mean(axis=0)
         self.x_scale_ = X_raw.std(axis=0)
         self.x_scale_[self.x_scale_ == 0.0] = 1.0
+
         self.y_mean_ = float(latent_raw.mean())
         self.y_scale_ = float(latent_raw.std())
         if self.y_scale_ == 0.0:
             self.y_scale_ = 1.0
+
         X = (X_raw - self.x_mean_) / self.x_scale_
         y = (latent_raw - self.y_mean_) / self.y_scale_
+        # ----------------------------------- end of standardization ----------------------------------
+
         # supplied noise is retained only as a reference diagnostic
         sigma = np.asarray(noise_std, dtype=float).reshape(-1)
         if sigma.size == 1:
@@ -87,16 +133,21 @@ class GPFluxST:
         if np.any(sigma < 0.0):
             raise ValueError("noise_std must be nonnegative.")
         self.supplied_noise_variance_standardized_ = (sigma / self.y_scale_) ** 2
+
+        # lengthscale was given in GPFluxST initialization
         lengthscale = np.asarray(self.lengthscale, dtype=float)
         if lengthscale.size == 1:
             lengthscale = np.full(2, lengthscale.item())
         if lengthscale.size != 2 or np.any(lengthscale <= 0.0):
             raise ValueError("lengthscale must be positive scalar or length-2 array.")
+
+        
         signal_kernel = ConstantKernel(self.kernel_variance, constant_value_bounds="fixed") * Matern(
             length_scale=lengthscale,
             length_scale_bounds="fixed",
             nu=2.5,
         )
+        
         fitted_gp = GaussianProcessRegressor(
             kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
             alpha=self.jitter,
@@ -137,6 +188,9 @@ class GPFluxST:
         return self
 
     def evaluate(self, s_q, T_q, return_variance=False):
+        """
+        Evaluates fitted flux model.
+        """
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         output_shape = s.shape
         X_raw = np.column_stack([s.ravel(), T.ravel()])

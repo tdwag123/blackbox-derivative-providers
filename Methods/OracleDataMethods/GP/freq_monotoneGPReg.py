@@ -1,4 +1,9 @@
 """
+Trying to implement frequency-weighted regularization in GP model.
+
+In this file, we have a Matern-5/2 GP with virtual derivative variables. Learns f = -q(s,T) and
+constrains df/ds >= 0 (i.e., dq/ds <= 0). Approximate derivative constraints through EP.
+
 MUST DO:
 * dynamic virtual updates, look more at Minka paper 
 * look more at using EP evidence for efficient hyperparameter optimization
@@ -8,8 +13,7 @@ wrt the latent vector
 
 DONE: 
 ** for regularization, see tracy's email
-use WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10, 1e1)), 
-set alpha=jitter in GPRegressor
+use WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10, 1e1)), set alpha=jitter in GPRegressor
 --> then use learned noise level in the EP algorithm
 --> set reg_function to be less than noise variance because shouldn't
 override learned noise estimate
@@ -86,26 +90,46 @@ class MonotoneGPFluxST:
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
     def _kernel_parts(self, X, Y):
-        delta = X[:, None, :]- Y[None, :, :]
-        r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
+        """
+        Returns delta: coordinate-by-coordinate difference btwn every point in X and every point in Y,
+        and r: pairwise length-scale normalized Euclidean distance btwn every point in X and every point in Y. 
+        """
+        delta = X[:, None, :] - Y[None, :, :]
+        r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2)) 
         return delta, r
 
     def _K(self, X, Y):
+        """
+        Constructing the covariance matrix / Matern kernel K.
+        """
         _, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
-        return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) 
-                * np.exp(-a * r))
 
+        return (self.variance_ 
+                * (1.0 + a * r + 5.0 * r**2 / 3.0) 
+                * np.exp(-a * r)
+        )
+
+    # ---------------------------------------kernel derivatives------------------------------------------------
     def _dK_dx(self, X, Y, dim):
+        """
+
+        """
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         factor = -(5.0/3.0) * self.variance_ * (1.0 + a * r) * np.exp(-a * r)
         return factor * delta[:, :, dim] / self.lengthscales_[dim] ** 2
 
     def _dK_dy(self, X, Y, dim):
+        """
+        
+        """
         return -self._dK_dx(X, Y, dim)
 
     def _d2K_dxdy(self, X, Y, dim_x, dim_y):
+        """
+
+        """
         delta, r = self._kernel_parts(X, Y)
         a = np.sqrt(5.0)
         lx = self.lengthscales_[dim_x]
@@ -114,7 +138,12 @@ class MonotoneGPFluxST:
         outer = (25.0/3.0) * delta[:, :, dim_x] * delta[:, :, dim_y]/(lx**2 * ly**2)
         return self.variance_ * np.exp(-a * r) * (diagonal - outer)
 
+    # ---------------------------------------end of kernel derivatives------------------------------------------------
+
     def _posterior(self, L, tau, eta, *, return_cholesky=False):
+        """
+        
+        """
         n = L.shape[0]
         B = np.eye(n) + L.T @ (tau[:, None] * L)
         C = np.linalg.cholesky(B)
@@ -128,6 +157,9 @@ class MonotoneGPFluxST:
         return mean, variance, alpha
 
     def _run_ep(self, K, y, noise_variance):
+        """
+
+        """
         n = y.size
         m = K.shape[0] - n
         L = np.linalg.cholesky(K)
@@ -183,6 +215,9 @@ class MonotoneGPFluxST:
        
 
     def fit(self, s_train, T_train, q_train, *, noise_std=0.0):
+        """
+
+        """
         s = np.asarray(s_train, dtype=float).reshape(-1)
         T = np.asarray(T_train, dtype=float).reshape(-1)
         q = np.asarray(q_train, dtype=float).reshape(-1)
@@ -232,6 +267,7 @@ class MonotoneGPFluxST:
         self.learned_noise_std_physical_ = np.sqrt(self.learned_noise_variance_physical_)
         self.gp_kernel_ = gp.kernel_
         self.log_marginal_likelihood_ = float(gp.log_marginal_likelihood_value_)
+        
         # reg function should not dominate learned observation noise
         if self.reg_function >= self.learned_noise_variance_:
             self.reg_function = self.reg_function * self.learned_noise_variance_
@@ -262,6 +298,9 @@ class MonotoneGPFluxST:
         return self
         
     def evaluate(self, s_q, T_q, return_variance=False):
+        """
+        
+        """
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         shape = s.shape
         X_raw = np.column_stack([s.ravel(), T.ravel()])
