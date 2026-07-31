@@ -17,6 +17,7 @@ from Data.BlackBoxOracle.blackboxoracle import (  # noqa: E402
     physical_flux,
     physical_flux_derivatives,
 )
+from Data.BlackBoxOracle.tabularoracle import make_tabular_oracle
 
 # ----------------------- import derivative providers ------------------------------------------------------------------
 from Methods.TabularDataMethods.KernelMethods import KernelDerivativeProviderST  # noqa: E402
@@ -809,8 +810,10 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         ),
         mesh_spacing=mesh_spacing,
     )
-
-    oracle = make_diffusion_oracle(oracle_config, seed=seed, noisy=noisy)
+    if Path(str(oracle_config)).suffix.lower() == ".csv":
+        oracle = make_tabular_oracle(oracle_config, noisy=noisy)
+    else:
+        oracle = make_diffusion_oracle(oracle_config, seed=seed, noisy=noisy)
     provider = AdaptiveBlackBoxProvider(
         method_key=method_key,
         oracle=oracle,

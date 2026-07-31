@@ -68,6 +68,16 @@ def source(T, xg):
     return 1.0
 
 
+def is_csv_oracle_config(oracle_config):
+    return Path(str(oracle_config)).suffix.lower() == ".csv"
+
+
+def oracle_result_name(oracle_config):
+    if is_csv_oracle_config(oracle_config):
+        return Path(str(oracle_config)).stem
+    return str(oracle_config)
+
+
 def newton(model, reference_model, x_mesh):
     # This function is the actual experiment. The adaptive blackbox provider is
     # only called through timed_flux_law inside NM below.
@@ -76,16 +86,19 @@ def newton(model, reference_model, x_mesh):
 
     # Reference solve uses the analytic flux for the same oracle configuration.
     # This does not mutate the blackbox provider.
-    U_ref, _, _ = NM(
-        x_mesh,
-        reference_model["flux"],
-        source,
-        T_dirichlet_left=0.0,
-        T_dirichlet_right=1.5,
-        tol=1e-10,
-        maxiter=40,
-        verbose=False,
-    )
+    if reference_model is not None:
+        U_ref, _, _ = NM(
+            x_mesh,
+            reference_model["flux"],
+            source,
+            T_dirichlet_left=0.0,
+            T_dirichlet_right=1.5,
+            tol=1e-10,
+            maxiter=40,
+            verbose=False,
+        )
+    else:
+        U_ref = None
 
     try:
         # Newton calls model["flux"], which may sample the oracle and fit local
@@ -100,7 +113,11 @@ def newton(model, reference_model, x_mesh):
             maxiter=40,
             verbose=False,
         )
-        rel_err = np.linalg.norm(U - U_ref) / np.linalg.norm(U_ref)
+        rel_err = (
+            np.linalg.norm(U - U_ref) / np.linalg.norm(U_ref)
+            if U_ref is not None
+            else np.nan
+        )
         status = "ok"
     except Exception as exc:
         residual_history = [np.nan]
@@ -167,19 +184,34 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
     x_mesh = np.linspace(0.0, 1.0, 21)
 
     for oracle_config in oracle_configs:
-        if oracle_config not in ORACLE_CONFIGS:
+        is_csv = is_csv_oracle_config(oracle_config)
+        oracle_name = oracle_result_name(oracle_config)
+        if is_csv and not Path(str(oracle_config)).is_file():
+            raise FileNotFoundError(f"tabular oracle CSV not found: {oracle_config}")
+        if not is_csv and oracle_config not in ORACLE_CONFIGS:
             raise ValueError(f"unknown oracle config: {oracle_config}")
 
-        params = ORACLE_CONFIGS[oracle_config]
+        params = None if is_csv else ORACLE_CONFIGS[oracle_config]
         dataset_results = []
 
         # Analytic reference is used only for reference solution error.
-        reference_model = build_provider("Analytic", oracle_config, x_mesh=x_mesh, noisy=False)
+        if not is_csv:
+            reference_model = build_provider(
+                "Analytic",
+                oracle_config,
+                x_mesh=x_mesh,
+                noisy=False,
+            )
+        else:
+            reference_model = None
 
         print(f"\n=== Blackbox oracle: {oracle_config} ===")
-        print(
-            "k0={k_0}, alpha={alpha}, beta={beta}, sigma={sigma}".format(**params)
-        )
+        if params is not None:
+            print(
+                "k0={k_0}, alpha={alpha}, beta={beta}, sigma={sigma}".format(**params)
+            )
+        else:
+            print(f"tabular CSV: {Path(str(oracle_config)).name}")
 
         for method in methods:
             print(f"\n--- {method} ---")
@@ -194,7 +226,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
                 )
                 row = {
                     "experiment": exp_name,
-                    "oracle_config": oracle_config,
+                    "oracle_config": oracle_name,
                     "method": model["method"],
                     "noisy_oracle": noisy,
                     "seed": seed,
@@ -209,7 +241,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
                 print(":(")
                 row = {
                     "experiment": exp_name,
-                    "oracle_config": oracle_config,
+                    "oracle_config": oracle_name,
                     "method": method,
                     "status": f"failed: {type(exc).__name__}",
                     "error": str(exc),
@@ -217,7 +249,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
             dataset_results.append(row)
 
         result_df = pd.DataFrame(dataset_results)
-        result_path = exp_dir / f"{oracle_config}.csv"
+        result_path = exp_dir / f"{oracle_name}.csv"
         result_df.to_csv(result_path, index=False)
         result_paths.append(result_path)
         print(f"\nSaved CSV results: {result_path}")
@@ -226,15 +258,19 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
 
 
 if __name__ == "__main__":
-    exp_name = "tolerance_smoke"
-    methods = [
-        "tolerance_bb_rbf",
-        "tolerance_bb_matern52_krr",
-        "tolerance_bb_rff",
-        # "bb_kissgp",
-        # "bb_monotonegp",
-    ]
-    oracle_configs = [
-        "nonlinear_high_noise",
-    ]
+    # exp_name = "tolerance_smoke"
+    # methods = [
+    #     "tolerance_bb_rbf",
+    #     "tolerance_bb_matern52_krr",
+    #     "tolerance_bb_rff",
+    #     # "bb_kissgp",
+    #     # "bb_monotonegp",
+    # ]
+    # oracle_configs = [
+    #     "nonlinear_high_noise",
+    # ]
+
+    exp_name = "dataset_test"
+    methods = ['tolerance_bb_rbf']
+    oracle_configs = [ROOT / 'Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv']
     comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)
