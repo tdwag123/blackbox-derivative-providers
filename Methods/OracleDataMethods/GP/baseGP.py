@@ -141,13 +141,24 @@ class GPFluxST:
         if lengthscale.size != 2 or np.any(lengthscale <= 0.0):
             raise ValueError("lengthscale must be positive scalar or length-2 array.")
 
-        
-        signal_kernel = ConstantKernel(self.kernel_variance, constant_value_bounds="fixed") * Matern(
+
+        # The following defines GP's signal covariance function k(x,x')=sigma_f^2 k_{Matern-5/2}(x,x')
+        # Specifices how strongly the model expects flux values at 2 input points 
+        # x = (s, T) and x' = (s', T') to be related.
+
+        # Basically, ConstantKernel is an amplitude parameter and scales every Matern covariance.
+        # Matern describes how flux values at nearby (s,T) are correlated;
+        # ConstantKernel controls the magnitude of the underlying flux variation;
+        # WhiteKernel represents independent noise in each observation. 
+        signal_kernel = ConstantKernel(
+            self.kernel_variance, constant_value_bounds="fixed"
+        ) * Matern(
             length_scale=lengthscale,
             length_scale_bounds="fixed",
             nu=2.5,
         )
 
+        # constructs GP model, fits it to standardized data, then extracts signal & noise portions of its fitted kernel
         fitted_gp = GaussianProcessRegressor(
             kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
             alpha=self.jitter,
@@ -159,15 +170,20 @@ class GPFluxST:
         fitted_gp.fit(X, y)
         fitted_signal_kernel = fitted_gp.kernel_.k1
         fitted_white_kernel = fitted_gp.kernel_.k2
+
+    
         self.variance_ = float(fitted_signal_kernel.k1.constant_value)
         self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
+
         # WhiteKernel.noise_level is a variance in standardized output units
         self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
         self.learned_noise_std_ = float(np.sqrt(self.learned_noise_variance_))
         self.learned_noise_variance_physical_ = float(self.learned_noise_variance_ * self.y_scale_**2)
         self.learned_noise_std_physical_ = float(np.sqrt(self.learned_noise_variance_physical_))
+
         if self.reg_function > 0.0 and self.reg_function >= self.learned_noise_variance_:
             self.reg_function = self.reg_function * self.learned_noise_variance_
+
         self.gp_kernel_ = fitted_gp.kernel_
         self.log_marginal_likelihood_ = float(fitted_gp.log_marginal_likelihood_value_)
 
@@ -186,6 +202,7 @@ class GPFluxST:
         self.condition_number_ = float(np.linalg.cond(training_system))
         self.alpha_norm_ = float(np.linalg.norm(self.alpha_))
         return self
+
 
     def evaluate(self, s_q, T_q, return_variance=False):
         """
