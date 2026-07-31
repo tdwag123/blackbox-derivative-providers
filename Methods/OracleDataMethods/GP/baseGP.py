@@ -12,9 +12,9 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 class GPFluxST:
     """
-    s_train:
-    T_train:
-    q_train:
+    s_train: training values of s.
+    T_train: training values of the temperature T. 
+    q_train: observed flux values.
     noise_std: assumed std dev of noise in observed flux values q; 0 -> treats observations as exact. larger values smooth data more strongly.
     learn_neg_flux: if True, learns -q(s,T) instead of q(s,T) to enforce accurate monotonicity constraints.
     jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I.
@@ -147,7 +147,7 @@ class GPFluxST:
             length_scale_bounds="fixed",
             nu=2.5,
         )
-        
+
         fitted_gp = GaussianProcessRegressor(
             kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
             alpha=self.jitter,
