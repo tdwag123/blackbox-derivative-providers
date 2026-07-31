@@ -19,6 +19,8 @@ from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
     build_provider as build_tolerance_provider,
 )
 
+PHYSICS_TOL = 1.0e-10
+
 
 def build_test_provider(method, oracle_config, *, x_mesh=None, noisy=True, seed=0):
     method_text = str(method)
@@ -54,13 +56,39 @@ class TimedFluxLaw:
         self.flux_law = flux_law
         self.calls = 0
         self.elapsed_s = 0.0
+        self.entropy_values = []
+        self.monotonicity_values = []
 
     def __call__(self, s, T, xg):
         start = time.perf_counter()
         result = self.flux_law(s, T, xg)
         self.elapsed_s += time.perf_counter() - start
         self.calls += 1
+        q, dq_ds, _ = result
+        self.entropy_values.append(float(q) * float(s))
+        self.monotonicity_values.append(float(dq_ds))
         return result
+
+    def physical_correctness(self):
+        entropy = np.asarray(self.entropy_values, dtype=float)
+        monotonicity = np.asarray(self.monotonicity_values, dtype=float)
+        if entropy.size == 0:
+            return {
+                "physics_eval_source": "newton_flux_calls",
+                "physics_tol": PHYSICS_TOL,
+                "entropy_violation_%": np.nan,
+                "worst_entropy_violation": np.nan,
+                "monotonicity_violation_%": np.nan,
+                "worst_monotonicity_violation": np.nan,
+            }
+        return {
+            "physics_eval_source": "newton_flux_calls",
+            "physics_tol": PHYSICS_TOL,
+            "entropy_violation_%": 100.0 * np.mean(entropy > PHYSICS_TOL),
+            "worst_entropy_violation": np.nanmax(np.maximum(0.0, entropy)),
+            "monotonicity_violation_%": 100.0 * np.mean(monotonicity > PHYSICS_TOL),
+            "worst_monotonicity_violation": np.nanmax(np.maximum(0.0, monotonicity)),
+        }
 
 
 def source(T, xg):
@@ -130,6 +158,7 @@ def newton(model, reference_model, x_mesh):
             else np.nan
         ),
     }
+    row.update(timed_flux_law.physical_correctness())
     row.update(diagnostics)
     return row
 
