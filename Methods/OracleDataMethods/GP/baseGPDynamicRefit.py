@@ -394,9 +394,12 @@ def main():
     print("Update info:", update_info)
     print("q before update:", q_before)
     print("q after update: ", q_after)
+    print("dq_ds before update:", dq_ds_before)
+    print("dq_ds after update: ", dq_ds_after)
+    print("dq_dT before update:", dq_dT_before)
+    print("dq_dT after update: ", dq_dT_after)
     print("variance before:", var_before)
     print("variance after: ", var_after)
-
 
 if __name__ == "__main__":
     main()
@@ -408,6 +411,10 @@ Smoke test passed.
 Update info: {'n_added': 2, 'n_dropped': 2, 'cache_size': 8, 'posterior_updates': 1}
 q before update: [ 4.56794896e-01  1.94458365e-05 -5.22558621e-01]
 q after update:  [ 5.41458379e-01 -7.18799437e-05 -6.17381596e-01]
+dq_ds before update: [-0.5260232  -0.57800855 -0.6897188 ]
+dq_ds after update:  [-1.02358782 -1.11572022 -1.26531373]
+dq_dT before update: [-0.70520919 -0.77067806 -0.90263918]
+dq_dT after update:  [-0.01743578 -0.05334376 -0.15232514]
 variance before: [1.26778504e-02 3.21609391e-07 1.26778504e-02]
 variance after:  [1.73247375e-04 4.03975807e-07 5.42127047e-06]
 
