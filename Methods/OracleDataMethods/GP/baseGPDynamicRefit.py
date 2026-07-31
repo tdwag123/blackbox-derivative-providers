@@ -223,22 +223,23 @@ class GPFluxST:
             raise ValueError("lengthscale must be positive scalar or length-2 array.")
         signal_kernel = ConstantKernel(
             self.kernel_variance,
-            (1e-4, 1e4),
+            constant_value_bounds="fixed",
         ) * Matern(
             length_scale=lengthscale,
-            length_scale_bounds=(1e-2, 1e2),
+            length_scale_bounds="fixed",
             nu=2.5,
         )
         white_kernel = WhiteKernel(
             noise_level=self.noise_variance,
-            noise_level_bounds=(1e-10, 1e1),
+            noise_level_bounds="fixed",
         )
 
         fitted_gp = GaussianProcessRegressor(
             kernel=signal_kernel + white_kernel,
             alpha=self.jitter,
             normalize_y=False,
-            n_restarts_optimizer=self.n_restarts_optimizer,
+            optimizer=None,
+            n_restarts_optimizer=0,
             random_state=0,
         )
         fitted_gp.fit(X, y)
@@ -246,6 +247,8 @@ class GPFluxST:
         fitted_white_kernel = fitted_gp.kernel_.k2
         self.variance_ = float(fitted_signal_kernel.k1.constant_value)
         self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
+        if self.lengthscales_.size == 1:
+            self.lengthscales_ = np.full(2, float(self.lengthscales_.reshape(-1)[0]))
         # WhiteKernel.noise_level is a variance in standardized output units
         self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
         self.learned_noise_std_ = float(np.sqrt(self.learned_noise_variance_))
