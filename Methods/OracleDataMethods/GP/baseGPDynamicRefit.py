@@ -57,7 +57,7 @@ class GPFluxST:
         n_restarts_optimizer=0,
         reg_function=0.0,
         kernel_variance=1.0,
-        lengthscale=2.0,
+        lengthscale=3.0,
         noise_variance=1.0e-2,
         max_cache_size=None,
     ):
