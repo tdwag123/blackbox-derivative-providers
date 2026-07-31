@@ -32,6 +32,11 @@ except (ImportError, OSError):
     GPFluxST = None
 
 try:
+    from Methods.OracleDataMethods.GP.baseGPDynamicRefit import GPFluxST as DynamicGPFluxST
+except (ImportError, OSError):
+    DynamicGPFluxST = None
+
+try:
     from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_general import (
         RFFDerivativeProviderST,
     )
@@ -336,6 +341,10 @@ class AdaptiveBlackBoxProvider:
         self.uncertainty_count = 0
         self.last_status = "not_evaluated"
         self.current_surrogate = None
+        self.dynamic_cache_keys = []
+        self.dynamic_posterior_updates = 0
+        self.dynamic_points_added = 0
+        self.dynamic_points_dropped = 0
 
         # Scaling map for geometry. Sampling radii and cache-neighborhood tests
         # are performed in scaled coordinates, not raw physical units.
@@ -428,7 +437,8 @@ class AdaptiveBlackBoxProvider:
         # All local surrogate classes see scaled coordinates. Their derivative
         # outputs are converted back to physical derivatives in _surrogate_evaluate.
         X_scaled = self._to_scaled(np.column_stack([s_data, T_data]))
-        self.surrogate_fit_count += 1
+        if self.method_key not in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
+            self.surrogate_fit_count += 1
 
         # Kernel ridge / RBF is the simplest non-GP local surrogate. With this
         # small active cache, the default ridge is deliberately not tiny; the
@@ -517,6 +527,11 @@ class AdaptiveBlackBoxProvider:
                 noise_variance=self.model_options.get("noise_variance", 1.0e-2),
             )
 
+        if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
+            if DynamicGPFluxST is None:
+                raise ImportError("bb_basegp_dynamic requires sklearn/scipy GP dependencies")
+            return self._fit_dynamic_basegp(X_scaled, q_data)
+
         # Hook for a monotone GP provider. This currently depends on the
         # importable state of Methods/OracleDataMethods/GP/monotoneGPReg.py.
         if self.method_key in {"bb_monotonegp", "bb_materngpmonotone"}:
@@ -542,6 +557,47 @@ class AdaptiveBlackBoxProvider:
             )
 
         raise ValueError(f"unknown blackbox method: {self.method_key}")
+
+    def _fit_dynamic_basegp(self, X_scaled, q_data):
+        cache_keys = list(self.cache.active.keys())
+        can_update = (
+            self.current_surrogate is not None
+            and len(cache_keys) >= len(self.dynamic_cache_keys)
+            and cache_keys[: len(self.dynamic_cache_keys)] == self.dynamic_cache_keys
+        )
+
+        if can_update:
+            new_keys = cache_keys[len(self.dynamic_cache_keys) :]
+            if new_keys:
+                new_points = np.array(new_keys, dtype=float)
+                new_scaled = self._to_scaled(new_points)
+                new_q = np.array([self.cache.active[key] for key in new_keys], dtype=float)
+                update_info = self.current_surrogate.update_posterior(
+                    new_scaled[:, 0],
+                    new_scaled[:, 1],
+                    new_q,
+                )
+                self.dynamic_posterior_updates += 1
+                self.dynamic_points_added += int(update_info.get("n_added", 0))
+                self.dynamic_points_dropped += int(update_info.get("n_dropped", 0))
+                self.dynamic_cache_keys = cache_keys
+            return self.current_surrogate
+
+        self.surrogate_fit_count += 1
+        self.dynamic_cache_keys = cache_keys
+        return DynamicGPFluxST(
+            X_scaled[:, 0],
+            X_scaled[:, 1],
+            q_data,
+            noise_std=self.model_options.get("noise_std", 0.0),
+            jitter=self.model_options.get("jitter", 1.0e-8),
+            n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+            reg_function=self.model_options.get("reg_function", 0.0),
+            kernel_variance=self.model_options.get("kernel_variance", 1.0),
+            lengthscale=self.model_options.get("lengthscale", 2.0),
+            noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+            max_cache_size=self.options.max_points,
+        )
 
     def _surrogate_evaluate(self, surrogate, point):
         scaled = self._to_scaled(point.reshape(1, 2))
@@ -600,6 +656,8 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
             "bb_monotonegp",
             "bb_materngpmonotone",
         }:
@@ -613,6 +671,8 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
             "bb_monotonegp",
             "bb_materngpmonotone",
         }
@@ -738,6 +798,14 @@ class AdaptiveBlackBoxProvider:
                 "bb_cache_limit": self.options.max_points,
             }
         )
+        if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
+            diag.update(
+                {
+                    "bb_dynamic_posterior_updates": self.dynamic_posterior_updates,
+                    "bb_dynamic_points_added": self.dynamic_points_added,
+                    "bb_dynamic_points_dropped": self.dynamic_points_dropped,
+                }
+            )
         return diag
 
 
