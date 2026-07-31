@@ -160,6 +160,12 @@ def newton(model, reference_model, x_mesh):
     }
     row.update(timed_flux_law.physical_correctness())
     row.update(diagnostics)
+    oracle_calls = row.get("oracle_calls", 0)
+    row["flux_calls_per_oracle_call"] = (
+        row["flux_calls"] / oracle_calls
+        if oracle_calls
+        else np.nan
+    )
     return row
 
 
