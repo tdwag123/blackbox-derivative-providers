@@ -47,6 +47,13 @@ try:
     from Methods.OracleDataMethods.GP.monotoneGPReg import MonotoneGPFluxST
 except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
+
+try:
+    from Methods.OracleDataMethods.GP.monotoneGPRegDynamicRefit import (
+        MonotoneGPFluxST as DynamicMonotoneGPFluxST,
+    )
+except (ImportError, OSError, AttributeError):
+    DynamicMonotoneGPFluxST = None
 # -----------------------------------------------------------------------------------------------------------------------
 
 STATE_DIM = 2
@@ -222,6 +229,7 @@ def parse_method_spec(method):
                     "grid_size",
                     "n_virtual_per_axis",
                     "ep_max_iter",
+                    "online_ep_sweeps",
                     "n_restarts_optimizer",
                     "degree",
                 }:
@@ -345,6 +353,7 @@ class AdaptiveBlackBoxProvider:
         self.dynamic_posterior_updates = 0
         self.dynamic_points_added = 0
         self.dynamic_points_dropped = 0
+        self.dynamic_ep_refinement_sweeps = 0
 
         # Scaling map for geometry. Sampling radii and cache-neighborhood tests
         # are performed in scaled coordinates, not raw physical units.
@@ -437,7 +446,12 @@ class AdaptiveBlackBoxProvider:
         # All local surrogate classes see scaled coordinates. Their derivative
         # outputs are converted back to physical derivatives in _surrogate_evaluate.
         X_scaled = self._to_scaled(np.column_stack([s_data, T_data]))
-        if self.method_key not in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
+        if self.method_key not in {
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
+        }:
             self.surrogate_fit_count += 1
 
         # Kernel ridge / RBF is the simplest non-GP local surrogate. With this
@@ -532,6 +546,11 @@ class AdaptiveBlackBoxProvider:
                 raise ImportError("bb_basegp_dynamic requires sklearn/scipy GP dependencies")
             return self._fit_dynamic_basegp(X_scaled, q_data)
 
+        if self.method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}:
+            if DynamicMonotoneGPFluxST is None or not hasattr(DynamicMonotoneGPFluxST, "evaluate"):
+                raise ImportError("bb_monotonegp_dynamic provider is not currently importable")
+            return self._fit_dynamic_monotonegp(X_scaled, q_data)
+
         # Hook for a monotone GP provider. This currently depends on the
         # importable state of Methods/OracleDataMethods/GP/monotoneGPReg.py.
         if self.method_key in {"bb_monotonegp", "bb_materngpmonotone"}:
@@ -599,6 +618,57 @@ class AdaptiveBlackBoxProvider:
             max_cache_size=self.options.max_points,
         )
 
+    def _fit_dynamic_monotonegp(self, X_scaled, q_data):
+        cache_keys = list(self.cache.active.keys())
+        can_update = (
+            self.current_surrogate is not None
+            and len(cache_keys) >= len(self.dynamic_cache_keys)
+            and cache_keys[: len(self.dynamic_cache_keys)] == self.dynamic_cache_keys
+        )
+
+        if can_update:
+            new_keys = cache_keys[len(self.dynamic_cache_keys) :]
+            if new_keys:
+                new_points = np.array(new_keys, dtype=float)
+                new_scaled = self._to_scaled(new_points)
+                new_q = np.array([self.cache.active[key] for key in new_keys], dtype=float)
+                update_info = self.current_surrogate.update_posterior(
+                    new_scaled[:, 0],
+                    new_scaled[:, 1],
+                    new_q,
+                )
+                self.dynamic_posterior_updates += 1
+                self.dynamic_points_added += int(update_info.get("n_added", 0))
+                self.dynamic_points_dropped += int(update_info.get("n_dropped", 0))
+                self.dynamic_ep_refinement_sweeps += int(
+                    update_info.get("ep_refinement_sweeps", 0)
+                )
+                self.dynamic_cache_keys = cache_keys
+            return self.current_surrogate
+
+        self.surrogate_fit_count += 1
+        self.dynamic_cache_keys = cache_keys
+        return DynamicMonotoneGPFluxST(
+            X_scaled[:, 0],
+            X_scaled[:, 1],
+            q_data,
+            noise_std=self.model_options.get("noise_std", 0.0),
+            n_virtual_per_axis=self.model_options.get("n_virtual_per_axis", 6),
+            probit_nu=self.model_options.get("probit_nu", 1.0e-3),
+            ep_max_iter=self.model_options.get("ep_max_iter", 10),
+            online_ep_sweeps=self.model_options.get("online_ep_sweeps", 3),
+            ep_damping=self.model_options.get("ep_damping", 0.5),
+            ep_tol=self.model_options.get("ep_tol", 1.0e-5),
+            jitter=self.model_options.get("jitter", 1.0e-8),
+            n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+            reg_function=self.model_options.get("reg_function", 0.0),
+            reg_derivative=self.model_options.get("reg_derivative", 1.0e-2),
+            kernel_variance=self.model_options.get("kernel_variance", 1.0),
+            lengthscale=self.model_options.get("lengthscale", 2.0),
+            noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+            max_cache_size=self.options.max_points,
+        )
+
     def _surrogate_evaluate(self, surrogate, point):
         scaled = self._to_scaled(point.reshape(1, 2))
         if self._surrogate_has_variance(surrogate):
@@ -660,6 +730,8 @@ class AdaptiveBlackBoxProvider:
             "bb_dynamic_basegp",
             "bb_monotonegp",
             "bb_materngpmonotone",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
         }:
             return uncertainty <= self.options.variance_tolerance
         return uncertainty <= self.options.mse_tolerance
@@ -675,6 +747,8 @@ class AdaptiveBlackBoxProvider:
             "bb_dynamic_basegp",
             "bb_monotonegp",
             "bb_materngpmonotone",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
         }
 
     def _has_local_coverage(self, point, radius):
@@ -798,12 +872,18 @@ class AdaptiveBlackBoxProvider:
                 "bb_cache_limit": self.options.max_points,
             }
         )
-        if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
+        if self.method_key in {
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
+        }:
             diag.update(
                 {
                     "bb_dynamic_posterior_updates": self.dynamic_posterior_updates,
                     "bb_dynamic_points_added": self.dynamic_points_added,
                     "bb_dynamic_points_dropped": self.dynamic_points_dropped,
+                    "bb_dynamic_ep_refinement_sweeps": self.dynamic_ep_refinement_sweeps,
                 }
             )
         return diag
