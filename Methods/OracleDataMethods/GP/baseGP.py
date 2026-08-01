@@ -124,7 +124,7 @@ class GPFluxST:
         y = (latent_raw - self.y_mean_) / self.y_scale_
         # ----------------------------------- end of standardization ----------------------------------
 
-        # supplied noise is retained only as a reference diagnostic
+        # --------------- supplied noise is retained only as a reference diagnostic -------------------
         sigma = np.asarray(noise_std, dtype=float).reshape(-1)
         if sigma.size == 1:
             sigma = np.full(y.size, sigma.item())
@@ -158,7 +158,7 @@ class GPFluxST:
             nu=2.5,
         )
 
-        # constructs GP model, fits it to standardized data, then extracts signal & noise portions of its fitted kernel
+        # constructs GP model, fits it to standardized data,
         fitted_gp = GaussianProcessRegressor(
             kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
             alpha=self.jitter,
@@ -168,19 +168,33 @@ class GPFluxST:
             random_state=0,
         )
         fitted_gp.fit(X, y)
+
+        # then extracts signal & noise portions of its fitted kernel
+        # fitted_gp.kernel_ = (signal kernel) + (white/noise kernel)
+        # 
+        # ├── k1 = fitted_signal_kernel
+        # │   └── ConstantKernel * Matern
+        # │       ├── k1 = ConstantKernel
+        # │       └── k2 = Matern
+        # └── k2 = fitted_white_kernel
+        #     └── WhiteKernel
+
         fitted_signal_kernel = fitted_gp.kernel_.k1
         fitted_white_kernel = fitted_gp.kernel_.k2
 
-    
+        # extracts ConstantKernel value
         self.variance_ = float(fitted_signal_kernel.k1.constant_value)
+        # extracts Matern length_scales
         self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
 
         # WhiteKernel.noise_level is a variance in standardized output units
         self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
         self.learned_noise_std_ = float(np.sqrt(self.learned_noise_variance_))
+        # noise variance & std in original q units
         self.learned_noise_variance_physical_ = float(self.learned_noise_variance_ * self.y_scale_**2)
         self.learned_noise_std_physical_ = float(np.sqrt(self.learned_noise_variance_physical_))
 
+        # regularization should always be less than noise. easy way to ensure this:
         if self.reg_function > 0.0 and self.reg_function >= self.learned_noise_variance_:
             self.reg_function = self.reg_function * self.learned_noise_variance_
 
@@ -190,10 +204,14 @@ class GPFluxST:
         # final latent-function posterior system: 
         #       --> WhiteKernel supplies the learned observation variance
         #       --> reg_function is an additional function-only diagonal regularizer.
-        K_train = self._K(X, X)
+
+        # Builds signal covariance matrix
+        K_train = self._K(X, X) 
         diagonal_variance = (self.learned_noise_variance_ + self.reg_function + self.jitter)
+
         training_system = (K_train + diagonal_variance * np.eye(X.shape[0]))
         L = np.linalg.cholesky(training_system)
+
         self.alpha_ = cho_solve((L, True), y, check_finite=False)
         self.X_train_ = X
         self.training_cholesky_ = L
@@ -201,6 +219,7 @@ class GPFluxST:
         self.effective_diagonal_variance_ = diagonal_variance
         self.condition_number_ = float(np.linalg.cond(training_system))
         self.alpha_norm_ = float(np.linalg.norm(self.alpha_))
+
         return self
 
 
