@@ -5,6 +5,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Error columns:
+# - FEM_sol_err compares the experiment solve to the coarse analytic-flux FEM solve.
+# - true_sol_err compares to a non-surrogate reference on the same coarse nodes.
+#   Linear configs use the closed-form solution; nonlinear configs use a much
+#   finer analytic-flux FEM solve sampled back onto the coarse mesh.
+
 # Allow this script to be run directly while still importing repo modules.
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
@@ -20,6 +26,7 @@ from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
 )
 
 PHYSICS_TOL = 1.0e-10
+FINE_TRUE_NODES = 201
 
 
 def build_test_provider(
@@ -115,7 +122,39 @@ def oracle_result_name(oracle_config):
     return str(oracle_config)
 
 
-def newton(model, reference_model, x_mesh, pressure=False):
+def relative_error(solution, reference):
+    return float(np.linalg.norm(solution - reference) / np.linalg.norm(reference))
+
+
+def linear_true_solution(x_mesh, oracle_config):
+    params = ORACLE_CONFIGS[oracle_config]
+    if params["alpha"] != 0.0 or params["beta"] != 0.0:
+        return None
+
+    k0 = params["k_0"]
+    return 1.5 * x_mesh + x_mesh * (1.0 - x_mesh) / (2.0 * k0)
+
+
+def true_solution_on_mesh(x_mesh, oracle_config, reference_model):
+    linear_solution = linear_true_solution(x_mesh, oracle_config)
+    if linear_solution is not None:
+        return linear_solution
+
+    x_fine = np.linspace(float(x_mesh[0]), float(x_mesh[-1]), FINE_TRUE_NODES)
+    U_fine, _, _ = NM(
+        x_fine,
+        reference_model["flux"],
+        source,
+        T_dirichlet_left=0.0,
+        T_dirichlet_right=1.5,
+        tol=1e-10,
+        maxiter=60,
+        verbose=False,
+    )
+    return np.interp(x_mesh, x_fine, U_fine)
+
+
+def newton(model, reference_model, x_mesh, true_solution=None, pressure=False):
     # This function is the actual experiment. The adaptive blackbox provider is
     # only called through timed_flux_law inside NM below.
     timed_flux_law = TimedFluxLaw(model["flux"])
@@ -162,16 +201,18 @@ def newton(model, reference_model, x_mesh, pressure=False):
             maxiter=40,
             verbose=False,
         )
-        rel_err = (
-            np.linalg.norm(U - U_ref) / np.linalg.norm(U_ref)
-            if U_ref is not None
+        FEM_sol_err = relative_error(U, U_ref) if U_ref is not None else np.nan
+        true_sol_err = (
+            relative_error(U, true_solution)
+            if true_solution is not None
             else np.nan
         )
         status = "ok"
     except Exception as exc:
         residual_history = [np.nan]
         num_iterations = np.nan
-        rel_err = np.nan
+        FEM_sol_err = np.nan
+        true_sol_err = np.nan
         status = f"failed: {type(exc).__name__}: {exc}"
 
     elapsed = time.perf_counter() - t0
@@ -186,7 +227,8 @@ def newton(model, reference_model, x_mesh, pressure=False):
         "newton_steps": num_iterations,
         "flux_calls": timed_flux_law.calls,
         "final_residual": residual_history[-1],
-        "rel_solution_err": rel_err,
+        "FEM_sol_err": FEM_sol_err,
+        "true_sol_err": true_sol_err,
         "solve_total_s": elapsed,
         "flux_eval_s": timed_flux_law.elapsed_s,
         "nonflux_s": elapsed - timed_flux_law.elapsed_s,
@@ -265,6 +307,11 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=F
             )
         else:
             reference_model = None
+        true_solution = (
+            true_solution_on_mesh(x_mesh, oracle_config, reference_model)
+            if reference_model is not None and not pressure
+            else None
+        )
 
         print(f"\n=== Blackbox oracle: {oracle_config} ===")
         if params is not None:
@@ -297,7 +344,15 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=F
 
                 # This is the only place in the comparison loop where the
                 # experiment provider is evaluated.
-                row.update(newton(model, reference_model, x_mesh, pressure=pressure))
+                row.update(
+                    newton(
+                        model,
+                        reference_model,
+                        x_mesh,
+                        true_solution,
+                        pressure=pressure,
+                    )
+                )
                 print("done")
             except Exception as exc:
                 print(":(")

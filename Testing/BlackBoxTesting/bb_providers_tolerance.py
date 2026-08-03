@@ -1028,6 +1028,13 @@ def build_provider(
 
     if method_key in {"bb_basegp_dynamic_distance", "bb_dynamic_basegp_distance"}:
         variance_tolerance_default = 1.5e-1
+    elif method_key in {
+        "bb_basegp",
+        "bb_matern_gp",
+        "bb_basegp_dynamic",
+        "bb_dynamic_basegp",
+    }:
+        variance_tolerance_default = 7.5e-2
     elif method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}:
         variance_tolerance_default = 7.5e-2
     else:
