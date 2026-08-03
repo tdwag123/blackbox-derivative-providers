@@ -9,23 +9,23 @@ import numpy as np
 from scipy.linalg import cho_solve
 
 class GPFluxST:
-    """
-    s_train: training values of s.
+    """ 
+    s_train: training values of s. 
     T_train: training values of the temperature T. 
-    q_train: observed flux values.
+    q_train: observed flux values. 
     noise_std: assumed std dev of noise in observed flux values q; 0 -> treats observations as exact. larger values smooth data more strongly.
-    learn_neg_flux: if True, learns -q(s,T) instead of q(s,T) to enforce accurate monotonicity constraints.
-    jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I.
+    learn_neg_flux: if True, learns -q(s,T) instead of q(s,T) to enforce accurate monotonicity constraints. 
+    jitter: added to diagonal of covariance matrix to improve stability. K_stable = K + (jitter)I. 
     n_restarts_optimizer: extra attempts to tune GP. 
         if 0, runs once from default starting point; if 2, one initial run + 2 optimizations from different starting points = 3 runs.
-        uses same training data with different kernel hyperparameters each time.
+        uses same training data with different kernel hyperparameters each time. 
     reg_function: 
     kernel_variance: 
-    lengthscale:
-    noise_variance:
-    n_rff_features: number of RFF features
+    lengthscale: 
+    noise_variance: 
+    n_rff_features: number of RFF features 
     random_state: if 0, use same frequencies each time so results are reproducible. 
-        if None, each run samples different random frequencies.
+        if None, each run samples different random frequencies. 
     """
 
     def __init__(
@@ -61,30 +61,41 @@ class GPFluxST:
         """
         RFF frequencies for a Matern-5/2 kernel.
 
-        Based on notation from Tracy's paper, to approximate Matern-5/2 kernel, we want to sample weights from Student's t distribution
+        Based on notation from Tracy's paper, to approximate Matern-5/2 kernel, we want to first sample weights from Student's t distribution
         p(w) = frac{Gamma((nu+d)/2)} / {(sigma*pi^{d/2}nu^{d/2}Gamma(nu/2))} (1+frac{1}{sigma^2 nu} ||w||^2)^{-(nu+d)/2}
 
         the kernel the above equation approximates is 
         k(x,y)=frac{(sigma sqrt(nu) ||x-y||)^{nu/2}} / {2^{nu/2-1}Gamma(nu/2)} K_{nu/2}(sigma sqrt{nu} ||x-y||)
 
         WE WANT TO APPROXIMATE A MATERN KERNEL OF THE FORM 
-        k(r)=sigma_f^2 (frac{2^{1-v}} / {Gamma(v)}) (sqrt(2v)r)^v * K_v(sqrt(2v)r) where v = 5/2
+        k(r)=sigma_f^2 (frac{2^{1-v}} / {Gamma(v)}) (sqrt(2v)r)^v * K_v(sqrt(2v)r) where v = 5/2 
         ==> k(r) = sigma_f^2 e^{-sqrt(5)r} (1+sqrt(5)r+{5r^2}{3})
         """
-        rng = np.random.default_rng(random_state) # creates random number generator object
+        
         nu = 5.0 # degrees of freedom in Student's t distribution, because we want smoothness parameter nu/2 in Matern kernel to = 5/2
 
-        # we start with n_features number of normal random vectors of size two (e.g. (w_s, w_T))
-        z = rng.normal(size=(n_features, 2))
-        
-        chi2 = rng.chisquare(nu, size=(n_features, 1))
+        # --------------------------------------------------------------------------------------------------------------
+        # Note: We cannot use NumPy's built-in Student's t sampling because it's not multivariate?
 
-        omega = z / np.sqrt(chi2 / nu)
+        # Recall that student's T distribution = Normal RV / sqrt(chisquare RV / nu)
+        # --------------------------------------------------------------------------------------------------------------
+        rng = np.random.default_rng(random_state) # creates random number generator object
+        
+        normal = rng.normal(size=(n_features, 2)) # start with n_features # of normal random vectors of size two (e.g. (w_s, w_T)) 
+        chi2 = rng.chisquare(nu, size=(n_features, 1)) # 1 bc we want multivariate students t, not independent univariate
+
+        omega = normal / np.sqrt(chi2 / nu)
         omega = omega / lengthscales[None, :]
 
         return omega
 
     def _features(self, X):
+        """
+        Constructs RFF frequencies with randomly sampled frequencies.
+        """
+        if self.rff_omega_ is None:
+            raise ValueError("_sample_rff_frequencies() has not yet been called, unable to construct features with empty frequencies.")
+        
         projection = X @ self.rff_omega_.T
         scale = np.sqrt(self.variance_ / self.n_rff_features)
 
@@ -189,7 +200,7 @@ class GPFluxST:
         self.learned_noise_std_ = float(np.sqrt(self.learned_noise_variance_))
 
         self.learned_noise_variance_physical_ = float(
-            self.learned_noise_variance_ * self.y_scale_**2
+            self.learned_noise_variance_ * self.y_scale_ ** 2
         )
         self.learned_noise_std_physical_ = float(
             np.sqrt(self.learned_noise_variance_physical_)
