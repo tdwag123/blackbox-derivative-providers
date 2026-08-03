@@ -143,7 +143,7 @@ def newton(model, reference_model, x_mesh, pressure=False):
     if pressure:
         T_dirichlet_left = 3000.0
         T_dirichlet_right = 0.0
-        nsource = lambda T, xg: 0.0
+        nsource = lambda T, xg: 0.1
     else:
         T_dirichlet_left = 0.0 
         T_dirichlet_right = 1.5
@@ -241,7 +241,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=F
     if pressure:
         provider_options = {
             "s_bounds": (-5000.0, 0.0),
-            "T_bounds": (0.0, 3000.0),
+            "T_bounds": (1.0, 1.0),
         }
 
     for oracle_config in oracle_configs:
@@ -332,12 +332,12 @@ if __name__ == "__main__":
     #     "nonlinear_high_noise",
     # ]
 
-    # exp_name = "dataset_test"
+    # exp_name = "oracle_test"
     # methods = ['tolerance_bb_rbf']
     # oracle_configs = [ROOT / 'Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv']
     # comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)
 
-    exp_name = "pressure"
-    methods = ['tolerance_bb_rbf']
+    exp_name = "pressure_finalver"
+    methods = ['tolerance_bb_rbf', 'tolerance_bb_basegp', 'tolerance_bb_poly']
     oracle_configs = [ROOT / "Data/PressureDataset/pressure_filtered_5.csv"]
     comparison(exp_name, methods, oracle_configs, noisy=True, pressure=True)
