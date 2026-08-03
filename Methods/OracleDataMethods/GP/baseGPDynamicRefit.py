@@ -57,7 +57,7 @@ class GPFluxST:
         n_restarts_optimizer=0,
         reg_function=0.0,
         kernel_variance=1.0,
-        lengthscale=2.0,
+        lengthscale=3.0,
         noise_variance=1.0e-2,
         max_cache_size=None,
     ):
@@ -223,22 +223,23 @@ class GPFluxST:
             raise ValueError("lengthscale must be positive scalar or length-2 array.")
         signal_kernel = ConstantKernel(
             self.kernel_variance,
-            (1e-4, 1e4),
+            constant_value_bounds="fixed",
         ) * Matern(
             length_scale=lengthscale,
-            length_scale_bounds=(1e-2, 1e2),
+            length_scale_bounds="fixed",
             nu=2.5,
         )
         white_kernel = WhiteKernel(
             noise_level=self.noise_variance,
-            noise_level_bounds=(1e-10, 1e1),
+            noise_level_bounds="fixed",
         )
 
         fitted_gp = GaussianProcessRegressor(
             kernel=signal_kernel + white_kernel,
             alpha=self.jitter,
             normalize_y=False,
-            n_restarts_optimizer=self.n_restarts_optimizer,
+            optimizer=None,
+            n_restarts_optimizer=0,
             random_state=0,
         )
         fitted_gp.fit(X, y)
@@ -246,6 +247,8 @@ class GPFluxST:
         fitted_white_kernel = fitted_gp.kernel_.k2
         self.variance_ = float(fitted_signal_kernel.k1.constant_value)
         self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
+        if self.lengthscales_.size == 1:
+            self.lengthscales_ = np.full(2, float(self.lengthscales_.reshape(-1)[0]))
         # WhiteKernel.noise_level is a variance in standardized output units
         self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
         self.learned_noise_std_ = float(np.sqrt(self.learned_noise_variance_))
@@ -391,9 +394,12 @@ def main():
     print("Update info:", update_info)
     print("q before update:", q_before)
     print("q after update: ", q_after)
+    print("dq_ds before update:", dq_ds_before)
+    print("dq_ds after update: ", dq_ds_after)
+    print("dq_dT before update:", dq_dT_before)
+    print("dq_dT after update: ", dq_dT_after)
     print("variance before:", var_before)
     print("variance after: ", var_after)
-
 
 if __name__ == "__main__":
     main()
@@ -405,6 +411,10 @@ Smoke test passed.
 Update info: {'n_added': 2, 'n_dropped': 2, 'cache_size': 8, 'posterior_updates': 1}
 q before update: [ 4.56794896e-01  1.94458365e-05 -5.22558621e-01]
 q after update:  [ 5.41458379e-01 -7.18799437e-05 -6.17381596e-01]
+dq_ds before update: [-0.5260232  -0.57800855 -0.6897188 ]
+dq_ds after update:  [-1.02358782 -1.11572022 -1.26531373]
+dq_dT before update: [-0.70520919 -0.77067806 -0.90263918]
+dq_dT after update:  [-0.01743578 -0.05334376 -0.15232514]
 variance before: [1.26778504e-02 3.21609391e-07 1.26778504e-02]
 variance after:  [1.73247375e-04 4.03975807e-07 5.42127047e-06]
 

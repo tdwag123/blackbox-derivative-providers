@@ -33,6 +33,18 @@ except (ImportError, OSError):
     GPFluxST = None
 
 try:
+    from Methods.OracleDataMethods.GP.baseGPDynamicRefit import GPFluxST as DynamicGPFluxST
+except (ImportError, OSError):
+    DynamicGPFluxST = None
+
+try:
+    from Methods.OracleDataMethods.GP.baseGPRegDynamicRefitDistanceBased import (
+        GPFluxST as DistanceDynamicGPFluxST,
+    )
+except (ImportError, OSError):
+    DistanceDynamicGPFluxST = None
+
+try:
     from Methods.TabularDataMethods.RandomFeature.unconstrained_regularized_least_squares_buildup.RFF_general import (
         RFFDerivativeProviderST,
     )
@@ -43,6 +55,13 @@ try:
     from Methods.OracleDataMethods.GP.monotoneGPReg import MonotoneGPFluxST
 except (ImportError, OSError, AttributeError):
     MonotoneGPFluxST = None
+
+try:
+    from Methods.OracleDataMethods.GP.monotoneGPRegDynamicRefit import (
+        MonotoneGPFluxST as DynamicMonotoneGPFluxST,
+    )
+except (ImportError, OSError, AttributeError):
+    DynamicMonotoneGPFluxST = None
 # -----------------------------------------------------------------------------------------------------------------------
 
 STATE_DIM = 2
@@ -132,6 +151,7 @@ class AdaptiveBBOptions:
     # Exact floating-point equality is unreliable, so oracle inputs are rounded
     # before going through lru_cache.
     oracle_key_decimals: int = 12
+    active_prune_policy: str = "fifo"
 
     # GP-like methods use predictive variance. Non-GP methods use normalized
     # training MSE on cached points near the current query point.
@@ -218,6 +238,7 @@ def parse_method_spec(method):
                     "grid_size",
                     "n_virtual_per_axis",
                     "ep_max_iter",
+                    "online_ep_sweeps",
                     "n_restarts_optimizer",
                     "degree",
                 }:
@@ -248,6 +269,8 @@ class OracleEvaluationCache:
         self.oracle_calls = 0
         self.cache_hits = 0
         self.prune_count = 0
+        self.prune_reference_point = None
+        self.distance_scale = np.ones(STATE_DIM, dtype=float)
 
         # This is the requested functools cache. It only prevents repeated exact
         # oracle calls while this provider object exists. The active FIFO cache
@@ -284,8 +307,23 @@ class OracleEvaluationCache:
         # FIFO prune: once the active training cache is full, discard the oldest
         # active point. This does not preserve old points for large-scale use.
         while len(self.active) > self.options.max_points:
-            self.active.popitem(last=False)
+            if (
+                self.options.active_prune_policy == "distance"
+                and self.prune_reference_point is not None
+            ):
+                self._pop_furthest_from_reference()
+            else:
+                self.active.popitem(last=False)
             self.prune_count += 1
+
+    def _pop_furthest_from_reference(self):
+        points = np.array(list(self.active.keys()), dtype=float)
+        reference = np.asarray(self.prune_reference_point, dtype=float).reshape(1, STATE_DIM)
+        scale = np.asarray(self.distance_scale, dtype=float).reshape(1, STATE_DIM)
+        scale[scale == 0.0] = 1.0
+        distances = np.linalg.norm((points - reference) / scale, axis=1)
+        key = list(self.active.keys())[int(np.argmax(distances))]
+        del self.active[key]
 
     def arrays(self):
         if not self.active:
@@ -337,6 +375,12 @@ class AdaptiveBlackBoxProvider:
         self.uncertainty_count = 0
         self.last_status = "not_evaluated"
         self.current_surrogate = None
+        self.dynamic_cache_keys = []
+        self.dynamic_posterior_updates = 0
+        self.dynamic_points_added = 0
+        self.dynamic_points_dropped = 0
+        self.dynamic_ep_refinement_sweeps = 0
+        self.current_query_point = None
 
         # Scaling map for geometry. Sampling radii and cache-neighborhood tests
         # are performed in scaled coordinates, not raw physical units.
@@ -355,6 +399,7 @@ class AdaptiveBlackBoxProvider:
             dtype=float,
         )
         self.scale[self.scale == 0.0] = 1.0
+        self.cache.distance_scale = self.scale
 
     def evaluate(self, s_q, T_q):
         # Provider classes are vector-shaped, but Newton usually calls the flux
@@ -381,6 +426,8 @@ class AdaptiveBlackBoxProvider:
 
         # Stay inside the oracle domain, especially for temperature.
         point = self._clip_physical(np.array([s, T], dtype=float))
+        self.current_query_point = point
+        self.cache.prune_reference_point = point
 
         # First ever query: seed the active cache with 10d nearby samples.
         if len(self.cache.active) == 0:
@@ -429,7 +476,15 @@ class AdaptiveBlackBoxProvider:
         # All local surrogate classes see scaled coordinates. Their derivative
         # outputs are converted back to physical derivatives in _surrogate_evaluate.
         X_scaled = self._to_scaled(np.column_stack([s_data, T_data]))
-        self.surrogate_fit_count += 1
+        if self.method_key not in {
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
+            "bb_basegp_dynamic_distance",
+            "bb_dynamic_basegp_distance",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
+        }:
+            self.surrogate_fit_count += 1
 
         # Kernel ridge / RBF is the simplest non-GP local surrogate. With this
         # small active cache, the default ridge is deliberately not tiny; the
@@ -518,6 +573,23 @@ class AdaptiveBlackBoxProvider:
                 noise_variance=self.model_options.get("noise_variance", 1.0e-2),
             )
 
+        if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
+            if DynamicGPFluxST is None:
+                raise ImportError("bb_basegp_dynamic requires sklearn/scipy GP dependencies")
+            return self._fit_dynamic_basegp(X_scaled, q_data)
+
+        if self.method_key in {"bb_basegp_dynamic_distance", "bb_dynamic_basegp_distance"}:
+            if DistanceDynamicGPFluxST is None:
+                raise ImportError(
+                    "bb_basegp_dynamic_distance requires sklearn/scipy GP dependencies"
+                )
+            return self._fit_dynamic_distance_basegp(X_scaled, q_data)
+
+        if self.method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}:
+            if DynamicMonotoneGPFluxST is None or not hasattr(DynamicMonotoneGPFluxST, "evaluate"):
+                raise ImportError("bb_monotonegp_dynamic provider is not currently importable")
+            return self._fit_dynamic_monotonegp(X_scaled, q_data)
+
         # Hook for a monotone GP provider. This currently depends on the
         # importable state of Methods/OracleDataMethods/GP/monotoneGPReg.py.
         if self.method_key in {"bb_monotonegp", "bb_materngpmonotone"}:
@@ -543,6 +615,142 @@ class AdaptiveBlackBoxProvider:
             )
 
         raise ValueError(f"unknown blackbox method: {self.method_key}")
+
+    def _fit_dynamic_basegp(self, X_scaled, q_data):
+        cache_keys = list(self.cache.active.keys())
+        can_update = (
+            self.current_surrogate is not None
+            and len(cache_keys) >= len(self.dynamic_cache_keys)
+            and cache_keys[: len(self.dynamic_cache_keys)] == self.dynamic_cache_keys
+        )
+
+        if can_update:
+            new_keys = cache_keys[len(self.dynamic_cache_keys) :]
+            if new_keys:
+                new_points = np.array(new_keys, dtype=float)
+                new_scaled = self._to_scaled(new_points)
+                new_q = np.array([self.cache.active[key] for key in new_keys], dtype=float)
+                update_info = self.current_surrogate.update_posterior(
+                    new_scaled[:, 0],
+                    new_scaled[:, 1],
+                    new_q,
+                )
+                self.dynamic_posterior_updates += 1
+                self.dynamic_points_added += int(update_info.get("n_added", 0))
+                self.dynamic_points_dropped += int(update_info.get("n_dropped", 0))
+                self.dynamic_cache_keys = cache_keys
+            return self.current_surrogate
+
+        self.surrogate_fit_count += 1
+        self.dynamic_cache_keys = cache_keys
+        return DynamicGPFluxST(
+            X_scaled[:, 0],
+            X_scaled[:, 1],
+            q_data,
+            noise_std=self.model_options.get("noise_std", 0.0),
+            jitter=self.model_options.get("jitter", 1.0e-8),
+            n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+            reg_function=self.model_options.get("reg_function", 0.0),
+            kernel_variance=self.model_options.get("kernel_variance", 1.0),
+            lengthscale=self.model_options.get("lengthscale", 3.0),
+            noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+            max_cache_size=self.options.max_points,
+        )
+
+    def _fit_dynamic_distance_basegp(self, X_scaled, q_data):
+        cache_keys = list(self.cache.active.keys())
+        can_update = (
+            self.current_surrogate is not None
+            and len(cache_keys) >= len(self.dynamic_cache_keys)
+            and cache_keys[: len(self.dynamic_cache_keys)] == self.dynamic_cache_keys
+        )
+
+        if can_update:
+            new_keys = cache_keys[len(self.dynamic_cache_keys) :]
+            if new_keys:
+                new_points = np.array(new_keys, dtype=float)
+                new_scaled = self._to_scaled(new_points)
+                new_q = np.array([self.cache.active[key] for key in new_keys], dtype=float)
+                query_scaled = self._to_scaled(self.current_query_point.reshape(1, 2))[0]
+                update_info = self.current_surrogate.update_posterior(
+                    new_scaled[:, 0],
+                    new_scaled[:, 1],
+                    new_q,
+                    s_query=query_scaled[0],
+                    T_query=query_scaled[1],
+                )
+                self.dynamic_posterior_updates += 1
+                self.dynamic_points_added += int(update_info.get("n_added", 0))
+                self.dynamic_points_dropped += int(update_info.get("n_dropped", 0))
+                self.dynamic_cache_keys = cache_keys
+            return self.current_surrogate
+
+        self.surrogate_fit_count += 1
+        self.dynamic_cache_keys = cache_keys
+        return DistanceDynamicGPFluxST(
+            X_scaled[:, 0],
+            X_scaled[:, 1],
+            q_data,
+            noise_std=self.model_options.get("noise_std", 0.0),
+            jitter=self.model_options.get("jitter", 1.0e-8),
+            n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+            reg_function=self.model_options.get("reg_function", 0.0),
+            kernel_variance=self.model_options.get("kernel_variance", 1.0),
+            lengthscale=self.model_options.get("lengthscale", 3.0),
+            noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+            max_cache_size=self.options.max_points,
+        )
+
+    def _fit_dynamic_monotonegp(self, X_scaled, q_data):
+        cache_keys = list(self.cache.active.keys())
+        can_update = (
+            self.current_surrogate is not None
+            and len(cache_keys) >= len(self.dynamic_cache_keys)
+            and cache_keys[: len(self.dynamic_cache_keys)] == self.dynamic_cache_keys
+        )
+
+        if can_update:
+            new_keys = cache_keys[len(self.dynamic_cache_keys) :]
+            if new_keys:
+                new_points = np.array(new_keys, dtype=float)
+                new_scaled = self._to_scaled(new_points)
+                new_q = np.array([self.cache.active[key] for key in new_keys], dtype=float)
+                update_info = self.current_surrogate.update_posterior(
+                    new_scaled[:, 0],
+                    new_scaled[:, 1],
+                    new_q,
+                )
+                self.dynamic_posterior_updates += 1
+                self.dynamic_points_added += int(update_info.get("n_added", 0))
+                self.dynamic_points_dropped += int(update_info.get("n_dropped", 0))
+                self.dynamic_ep_refinement_sweeps += int(
+                    update_info.get("ep_refinement_sweeps", 0)
+                )
+                self.dynamic_cache_keys = cache_keys
+            return self.current_surrogate
+
+        self.surrogate_fit_count += 1
+        self.dynamic_cache_keys = cache_keys
+        return DynamicMonotoneGPFluxST(
+            X_scaled[:, 0],
+            X_scaled[:, 1],
+            q_data,
+            noise_std=self.model_options.get("noise_std", 0.0),
+            n_virtual_per_axis=self.model_options.get("n_virtual_per_axis", 6),
+            probit_nu=self.model_options.get("probit_nu", 1.0e-3),
+            ep_max_iter=self.model_options.get("ep_max_iter", 10),
+            online_ep_sweeps=self.model_options.get("online_ep_sweeps", 1),
+            ep_damping=self.model_options.get("ep_damping", 0.5),
+            ep_tol=self.model_options.get("ep_tol", 1.0e-5),
+            jitter=self.model_options.get("jitter", 1.0e-8),
+            n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+            reg_function=self.model_options.get("reg_function", 0.0),
+            reg_derivative=self.model_options.get("reg_derivative", 1.0e-2),
+            kernel_variance=self.model_options.get("kernel_variance", 1.0),
+            lengthscale=self.model_options.get("lengthscale", 4.0),
+            noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+            max_cache_size=self.options.max_points,
+        )
 
     def _surrogate_evaluate(self, surrogate, point):
         scaled = self._to_scaled(point.reshape(1, 2))
@@ -601,8 +809,14 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
+            "bb_basegp_dynamic_distance",
+            "bb_dynamic_basegp_distance",
             "bb_monotonegp",
             "bb_materngpmonotone",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
         }:
             return uncertainty <= self.options.variance_tolerance
         return uncertainty <= self.options.mse_tolerance
@@ -614,8 +828,14 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
+            "bb_basegp_dynamic_distance",
+            "bb_dynamic_basegp_distance",
             "bb_monotonegp",
             "bb_materngpmonotone",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
         }
 
     def _has_local_coverage(self, point, radius):
@@ -739,6 +959,22 @@ class AdaptiveBlackBoxProvider:
                 "bb_cache_limit": self.options.max_points,
             }
         )
+        if self.method_key in {
+            "bb_basegp_dynamic",
+            "bb_dynamic_basegp",
+            "bb_basegp_dynamic_distance",
+            "bb_dynamic_basegp_distance",
+            "bb_monotonegp_dynamic",
+            "bb_dynamic_monotonegp",
+        }:
+            diag.update(
+                {
+                    "bb_dynamic_posterior_updates": self.dynamic_posterior_updates,
+                    "bb_dynamic_points_added": self.dynamic_points_added,
+                    "bb_dynamic_points_dropped": self.dynamic_points_dropped,
+                    "bb_dynamic_ep_refinement_sweeps": self.dynamic_ep_refinement_sweeps,
+                }
+            )
         return diag
 
 
@@ -790,6 +1026,22 @@ def build_provider(
         x_mesh = np.asarray(x_mesh, dtype=float)
         mesh_spacing = float(np.median(np.diff(x_mesh)))
 
+    variance_tolerance_default = (
+        7.5e-2
+        if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
+        else AdaptiveBBOptions.variance_tolerance
+    )
+    points_per_dim_default = (
+        20
+        if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
+        else AdaptiveBBOptions.initial_points_per_dim
+    )
+    active_prune_policy_default = (
+        "distance"
+        if method_key in {"bb_basegp_dynamic_distance", "bb_dynamic_basegp_distance"}
+        else AdaptiveBBOptions.active_prune_policy
+    )
+
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
         s_bounds=method_options.get("s_bounds", AdaptiveBBOptions.s_bounds),
@@ -801,11 +1053,11 @@ def build_provider(
         ),
         initial_points_per_dim=method_options.get(
             "initial_points_per_dim",
-            AdaptiveBBOptions.initial_points_per_dim,
+            points_per_dim_default,
         ),
         max_points_per_dim=method_options.get(
             "max_points_per_dim",
-            AdaptiveBBOptions.max_points_per_dim,
+            points_per_dim_default,
         ),
         refill_points=method_options.get("refill_points", AdaptiveBBOptions.refill_points),
         max_refinements_per_eval=method_options.get(
@@ -814,10 +1066,14 @@ def build_provider(
         ),
         rng_seed=method_options.get("rng_seed", seed),
         design=method_options.get("design", AdaptiveBBOptions.design),
+        active_prune_policy=method_options.get(
+            "active_prune_policy",
+            active_prune_policy_default,
+        ),
         mse_tolerance=method_options.get("mse_tolerance", AdaptiveBBOptions.mse_tolerance),
         variance_tolerance=method_options.get(
             "variance_tolerance",
-            AdaptiveBBOptions.variance_tolerance,
+            variance_tolerance_default,
         ),
         mesh_spacing=mesh_spacing,
     )
