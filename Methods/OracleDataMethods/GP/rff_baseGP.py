@@ -58,13 +58,28 @@ class GPFluxST:
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
     def _sample_rff_frequencies(self, n_features, lengthscales, random_state):
-        rng = np.random.default_rng(random_state)
-        df = 5.0
+        """
+        RFF frequencies for a Matern-5/2 kernel.
 
+        Based on notation from Tracy's paper, to approximate Matern-5/2 kernel, we want to sample weights from Student's t distribution
+        p(w) = frac{Gamma((nu+d)/2)} / {(sigma*pi^{d/2}nu^{d/2}Gamma(nu/2))} (1+frac{1}{sigma^2 nu} ||w||^2)^{-(nu+d)/2}
+
+        the kernel the above equation approximates is 
+        k(x,y)=frac{(sigma sqrt(nu) ||x-y||)^{nu/2}} / {2^{nu/2-1}Gamma(nu/2)} K_{nu/2}(sigma sqrt{nu} ||x-y||)
+
+        WE WANT TO APPROXIMATE A MATERN KERNEL OF THE FORM 
+        k(r)=sigma_f^2 (frac{2^{1-v}} / {Gamma(v)}) (sqrt(2v)r)^v * K_v(sqrt(2v)r) where v = 5/2
+        ==> k(r) = sigma_f^2 e^{-sqrt(5)r} (1+sqrt(5)r+{5r^2}{3})
+        """
+        rng = np.random.default_rng(random_state) # creates random number generator object
+        nu = 5.0 # degrees of freedom in Student's t distribution, because we want smoothness parameter nu/2 in Matern kernel to = 5/2
+
+        # we start with n_features number of normal random vectors of size two (e.g. (w_s, w_T))
         z = rng.normal(size=(n_features, 2))
-        chi2 = rng.chisquare(df, size=(n_features, 1))
+        
+        chi2 = rng.chisquare(nu, size=(n_features, 1))
 
-        omega = z / np.sqrt(chi2 / df)
+        omega = z / np.sqrt(chi2 / nu)
         omega = omega / lengthscales[None, :]
 
         return omega
