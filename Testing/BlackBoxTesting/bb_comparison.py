@@ -14,6 +14,9 @@ from Data.BlackBoxOracle.blackboxoracle import ORACLE_CONFIGS  # noqa: E402
 from Testing.BlackBoxTesting.bb_moving_local_providers import (  # noqa: E402
     build_provider as build_moving_provider,
 )
+from Testing.BlackBoxTesting.bb_pressure_1d_providers import (  # noqa: E402
+    build_provider as build_pressure_1d_provider,
+)
 from Testing.BlackBoxTesting.bb_providers_stencil import build_provider  # noqa: E402
 from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
     build_provider as build_tolerance_provider,
@@ -28,9 +31,11 @@ def build_test_provider(
     noisy=True,
     seed=0,
     provider_options=None,
+    pressure=False,
 ):
     method_text = str(method)
-    if method_text.lower().startswith("moving_"):
+    method_key = method_text.lower()
+    if method_key.startswith("moving_"):
         return build_moving_provider(
             method_text[len("moving_") :],
             oracle_config,
@@ -38,7 +43,16 @@ def build_test_provider(
             noisy=noisy,
             seed=seed,
         )
-    if method_text.lower().startswith("tolerance_"):
+    if method_key.startswith("tolerance_"):
+        if pressure:
+            return build_pressure_1d_provider(
+                method_text[len("tolerance_") :],
+                oracle_config,
+                x_mesh=x_mesh,
+                noisy=noisy,
+                seed=seed,
+                provider_options=provider_options,
+            )
         return build_tolerance_provider(
             method_text[len("tolerance_") :],
             oracle_config,
@@ -115,7 +129,7 @@ def newton(model, reference_model, x_mesh, pressure=False):
     if pressure:
         T_dirichlet_left = 3000.0
         T_dirichlet_right = 0.0
-        nsource = lambda T, xg: 0.0
+        nsource = lambda T, xg: 0.2
     else:
         T_dirichlet_left = 0.0 
         T_dirichlet_right = 1.5
@@ -250,6 +264,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=F
                     noisy=noisy,
                     seed=seed,
                     provider_options=provider_options,
+                    pressure=pressure,
                 )
                 row = {
                     "experiment": exp_name,
@@ -302,7 +317,7 @@ if __name__ == "__main__":
     # oracle_configs = [ROOT / 'Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv']
     # comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)
 
-    exp_name = "pressure"
-    methods = ['tolerance_bb_rbf']
+    exp_name = "pressure1D"
+    methods = ['tolerance_bb_poly', 'tolerance_bb_gp', 'tolerance_bb_materngp']
     oracle_configs = [ROOT / "Data/PressureDataset/pressure_filtered_5.csv"]
     comparison(exp_name, methods, oracle_configs, noisy=True, pressure=True)
