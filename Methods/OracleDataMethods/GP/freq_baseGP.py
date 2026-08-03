@@ -1,14 +1,12 @@
 """
-Base Matern-5/2 GP.
+Base Matern-5/2 GP. Instead of exact Matern kernel, using RFF.
 - Regularization allowed. 
 - No deriv-monotonicity constraints through EP.
-- Noise level learned through WhiteKernel.
 - Direct analytic differentiation through the kernel. 
+- 
 """
 import numpy as np
 from scipy.linalg import cho_solve
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 class GPFluxST:
     """
@@ -25,6 +23,9 @@ class GPFluxST:
     kernel_variance: 
     lengthscale:
     noise_variance:
+    n_rff_features: number of RFF features
+    random_state: if 0, use same frequencies each time so results are reproducible. 
+        if None, each run samples different random frequencies.
     """
 
     def __init__(
@@ -41,6 +42,8 @@ class GPFluxST:
         kernel_variance=1.0,
         lengthscale=2.0,
         noise_variance=1.0e-2,
+        n_rff_features=500,
+        random_state=0
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
         self.jitter = float(jitter)
@@ -49,32 +52,51 @@ class GPFluxST:
         self.kernel_variance = float(kernel_variance)
         self.lengthscale = lengthscale
         self.noise_variance = float(noise_variance)
+        self.n_rff_features = int(n_rff_features)
+        self.random_state = random_state
+
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
-    def _kernel_parts(self, X, Y):
-        """
-        Returns delta: coordinate-by-coordinate difference btwn every point in X and every point in Y,
-        and r: pairwise length-scale normalized Euclidean distance btwn every point in X and every point in Y. 
-        """
-        delta = X[:, None, :] - Y[None, :, :]
-        r = np.sqrt(np.sum((delta / self.lengthscales_) ** 2, axis=2))
-        return delta, r
+    def _sample_rff_frequencies(self, n_features, lengthscales, random_state):
+        rng = np.random.default_rng(random_state)
+        df = 5.0
+
+        z = rng.normal(size=(n_features, 2))
+        chi2 = rng.chisquare(df, size=(n_features, 1))
+
+        omega = z / np.sqrt(chi2 / df)
+        omega = omega / lengthscales[None, :]
+
+        return omega
+
+    def _features(self, X):
+        projection = X @ self.rff_omega_.T
+        scale = np.sqrt(self.variance_ / self.n_rff_features)
+
+        return scale * np.column_stack([
+            np.cos(projection),
+            np.sin(projection),
+        ])
 
     def _K(self, X, Y):
         """
-        Constructing the covariance matrix / Matern kernel K.
+        Constructing the RFF approximation to the Matern-5/2 covariance matrix.
         """
-        _, r = self._kernel_parts(X, Y)
-        a = np.sqrt(5.0)
-        return (self.variance_ * (1.0 + a * r + 5.0 * r**2 / 3.0) * np.exp(-a * r))
-
+        return self._features(X) @ self._features(Y).T
 
     # ---------------------------------------kernel derivatives------------------------------------------------
+    def _dfeatures_dx(self, X, dim):
+        projection = X @ self.rff_omega_.T
+        omega_dim = self.rff_omega_[:, dim]
+        scale = np.sqrt(self.variance_ / self.n_rff_features)
+
+        return scale * np.column_stack([
+            -np.sin(projection) * omega_dim[None, :],
+            np.cos(projection) * omega_dim[None, :],
+        ])
+
     def _dK_dx(self, X, Y, dim):
-        delta, r = self._kernel_parts(X, Y)
-        a = np.sqrt(5.0)
-        factor = (-(5.0 / 3.0) * self.variance_ * (1.0 + a * r) * np.exp(-a * r))
-        return (factor * delta[:, :, dim] / self.lengthscales_[dim] ** 2)
+        return self._dfeatures_dx(X, dim) @ self._features(Y).T
     # --------------------------------------end of kernel derivatives------------------------------------------
 
 
@@ -146,63 +168,29 @@ class GPFluxST:
         # Specifices how strongly the model expects flux values at 2 input points 
         # x = (s, T) and x' = (s', T') to be related.
 
-        # Basically, ConstantKernel is an amplitude parameter and scales every Matern covariance.
-        # Matern describes how flux values at nearby (s,T) are correlated;
-        # ConstantKernel controls the magnitude of the underlying flux variation;
-        # WhiteKernel represents independent noise in each observation. 
-        signal_kernel = ConstantKernel(
-            self.kernel_variance, constant_value_bounds="fixed"
-        ) * Matern(
-            length_scale=lengthscale,
-            length_scale_bounds="fixed",
-            nu=2.5,
-        )
-
-        # constructs GP model, fits it to standardized data...
-        fitted_gp = GaussianProcessRegressor(
-            kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
-            alpha=self.jitter,
-            normalize_y=False,
-            optimizer=None,
-            n_restarts_optimizer=0,
-            random_state=0,
-        )
-        fitted_gp.fit(X, y)
-
-        # ...then extracts signal & noise portions of its fitted kernel
-        # fitted_gp.kernel_ = (signal kernel) + (white/noise kernel)
-        # 
-        # ├── k1 = fitted_signal_kernel
-        # │   └── ConstantKernel * Matern
-        # │       ├── k1 = ConstantKernel
-        # │       └── k2 = Matern
-        # └── k2 = fitted_white_kernel
-        #     └── WhiteKernel
-
-        fitted_signal_kernel = fitted_gp.kernel_.k1
-        fitted_white_kernel = fitted_gp.kernel_.k2
-
-        # extracts ConstantKernel value
-        self.variance_ = float(fitted_signal_kernel.k1.constant_value)
-        # extracts Matern length_scales
-        self.lengthscales_ = np.asarray(fitted_signal_kernel.k2.length_scale, dtype=float)
-
-        # WhiteKernel.noise_level is a variance in standardized output units
-        self.learned_noise_variance_ = float(fitted_white_kernel.noise_level)
+        self.variance_ = self.kernel_variance
+        self.lengthscales_ = lengthscale
+        self.learned_noise_variance_ = self.noise_variance
         self.learned_noise_std_ = float(np.sqrt(self.learned_noise_variance_))
-        # noise variance & std in original q units
-        self.learned_noise_variance_physical_ = float(self.learned_noise_variance_ * self.y_scale_**2)
-        self.learned_noise_std_physical_ = float(np.sqrt(self.learned_noise_variance_physical_))
 
-        # regularization should always be less than noise. easy way to ensure this:
-        if self.reg_function > 0.0 and self.reg_function >= self.learned_noise_variance_:
-            self.reg_function = self.reg_function * self.learned_noise_variance_
+        self.learned_noise_variance_physical_ = float(
+            self.learned_noise_variance_ * self.y_scale_**2
+        )
+        self.learned_noise_std_physical_ = float(
+            np.sqrt(self.learned_noise_variance_physical_)
+        )
 
-        self.gp_kernel_ = fitted_gp.kernel_
-        self.log_marginal_likelihood_ = float(fitted_gp.log_marginal_likelihood_value_)
+        self.rff_omega_ = self._sample_rff_frequencies(
+            self.n_rff_features,
+            self.lengthscales_,
+            self.random_state,
+        )
+
+        self.gp_kernel_ = "RFF approximation to Matern-5/2"
+        self.log_marginal_likelihood_ = np.nan
 
         # final latent-function posterior system: 
-        #       --> WhiteKernel supplies the learned observation variance
+        #       --> noise_variance supplies fixed observation variance.
         #       --> reg_function is an additional function-only diagonal regularizer.
 
         # Builds signal covariance matrix
@@ -253,8 +241,11 @@ class GPFluxST:
                 K_query_train.T,
                 check_finite=False,
             )
-            variance_standardized = self.variance_ - np.sum(K_query_train * solved.T, axis=1)
+
+            prior_variance = np.sum(self._features(X) ** 2, axis=1)
+            variance_standardized = prior_variance - np.sum(K_query_train * solved.T, axis=1)
             variance = self.y_scale_**2 * np.maximum(variance_standardized, 0.0)
+
             return (
                 q.reshape(output_shape),
                 dq_ds.reshape(output_shape),
