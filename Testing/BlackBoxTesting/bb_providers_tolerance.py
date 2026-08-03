@@ -933,6 +933,11 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
         else AdaptiveBBOptions.variance_tolerance
     )
+    points_per_dim_default = (
+        20
+        if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
+        else AdaptiveBBOptions.initial_points_per_dim
+    )
 
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
@@ -943,11 +948,11 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         ),
         initial_points_per_dim=method_options.get(
             "initial_points_per_dim",
-            AdaptiveBBOptions.initial_points_per_dim,
+            points_per_dim_default,
         ),
         max_points_per_dim=method_options.get(
             "max_points_per_dim",
-            AdaptiveBBOptions.max_points_per_dim,
+            points_per_dim_default,
         ),
         refill_points=method_options.get("refill_points", AdaptiveBBOptions.refill_points),
         max_refinements_per_eval=method_options.get(
