@@ -656,7 +656,7 @@ class AdaptiveBlackBoxProvider:
             n_virtual_per_axis=self.model_options.get("n_virtual_per_axis", 6),
             probit_nu=self.model_options.get("probit_nu", 1.0e-3),
             ep_max_iter=self.model_options.get("ep_max_iter", 10),
-            online_ep_sweeps=self.model_options.get("online_ep_sweeps", 3),
+            online_ep_sweeps=self.model_options.get("online_ep_sweeps", 1),
             ep_damping=self.model_options.get("ep_damping", 0.5),
             ep_tol=self.model_options.get("ep_tol", 1.0e-5),
             jitter=self.model_options.get("jitter", 1.0e-8),
@@ -664,7 +664,7 @@ class AdaptiveBlackBoxProvider:
             reg_function=self.model_options.get("reg_function", 0.0),
             reg_derivative=self.model_options.get("reg_derivative", 1.0e-2),
             kernel_variance=self.model_options.get("kernel_variance", 1.0),
-            lengthscale=self.model_options.get("lengthscale", 2.0),
+            lengthscale=self.model_options.get("lengthscale", 4.0),
             noise_variance=self.model_options.get("noise_variance", 1.0e-2),
             max_cache_size=self.options.max_points,
         )
@@ -928,6 +928,12 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         x_mesh = np.asarray(x_mesh, dtype=float)
         mesh_spacing = float(np.median(np.diff(x_mesh)))
 
+    variance_tolerance_default = (
+        7.5e-2
+        if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
+        else AdaptiveBBOptions.variance_tolerance
+    )
+
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
         sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
@@ -953,7 +959,7 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         mse_tolerance=method_options.get("mse_tolerance", AdaptiveBBOptions.mse_tolerance),
         variance_tolerance=method_options.get(
             "variance_tolerance",
-            AdaptiveBBOptions.variance_tolerance,
+            variance_tolerance_default,
         ),
         mesh_spacing=mesh_spacing,
     )

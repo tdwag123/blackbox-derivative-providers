@@ -25,7 +25,7 @@ class MonotoneGPFluxST:
         n_virtual_per_axis=6,
         probit_nu=1e-3,
         ep_max_iter=10,
-        online_ep_sweeps=3,
+        online_ep_sweeps=1,
         ep_damping=0.5,
         ep_tol=1e-5,
         jitter=1e-8,
@@ -33,7 +33,7 @@ class MonotoneGPFluxST:
         reg_function=0.0, 
         reg_derivative=1e-2,
         kernel_variance=1.0,
-        lengthscale=3.0,
+        lengthscale=4.0,
         noise_variance=1.0e-2,
         max_cache_size=None,
     ):
