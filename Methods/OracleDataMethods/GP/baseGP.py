@@ -141,7 +141,6 @@ class GPFluxST:
         if lengthscale.size != 2 or np.any(lengthscale <= 0.0):
             raise ValueError("lengthscale must be positive scalar or length-2 array.")
 
-
         # The following defines GP's signal covariance function k(x,x')=sigma_f^2 k_{Matern-5/2}(x,x')
         # Specifices how strongly the model expects flux values at 2 input points 
         # x = (s, T) and x' = (s', T') to be related.
@@ -240,7 +239,7 @@ class GPFluxST:
 
         latent_physical = (self.y_mean_ + self.y_scale_ * latent_standardized)
         gradient_physical = (self.y_scale_ * gradient_standardized / self.x_scale_[None, :])
-        
+
         sign = -1.0 if self.learn_neg_flux else 1.0
         q = sign * latent_physical
         dq_ds = sign * gradient_physical[:, 0]

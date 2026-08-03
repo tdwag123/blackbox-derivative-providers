@@ -694,10 +694,10 @@ class AdaptiveBlackBoxProvider:
             noise_std=self.model_options.get("noise_std", 0.0),
             jitter=self.model_options.get("jitter", 1.0e-8),
             n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
-            reg_function=self.model_options.get("reg_function", 0.0),
+            reg_function=self.model_options.get("reg_function", 1.0e-3),
             kernel_variance=self.model_options.get("kernel_variance", 1.0),
             lengthscale=self.model_options.get("lengthscale", 3.0),
-            noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+            noise_variance=self.model_options.get("noise_variance", 1.0e-3),
             max_cache_size=self.options.max_points,
         )
 
@@ -1026,11 +1026,12 @@ def build_provider(
         x_mesh = np.asarray(x_mesh, dtype=float)
         mesh_spacing = float(np.median(np.diff(x_mesh)))
 
-    variance_tolerance_default = (
-        7.5e-2
-        if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
-        else AdaptiveBBOptions.variance_tolerance
-    )
+    if method_key in {"bb_basegp_dynamic_distance", "bb_dynamic_basegp_distance"}:
+        variance_tolerance_default = 1.5e-1
+    elif method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}:
+        variance_tolerance_default = 7.5e-2
+    else:
+        variance_tolerance_default = AdaptiveBBOptions.variance_tolerance
     points_per_dim_default = (
         20
         if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
@@ -1041,12 +1042,17 @@ def build_provider(
         if method_key in {"bb_basegp_dynamic_distance", "bb_dynamic_basegp_distance"}
         else AdaptiveBBOptions.active_prune_policy
     )
+    sample_radius_default = (
+        0.55
+        if method_key in {"bb_basegp_dynamic_distance", "bb_dynamic_basegp_distance"}
+        else AdaptiveBBOptions.sample_radius
+    )
 
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
         s_bounds=method_options.get("s_bounds", AdaptiveBBOptions.s_bounds),
         T_bounds=method_options.get("T_bounds", AdaptiveBBOptions.T_bounds),
-        sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
+        sample_radius=method_options.get("sample_radius", sample_radius_default),
         validation_radius_factor=method_options.get(
             "validation_radius_factor",
             AdaptiveBBOptions.validation_radius_factor,
