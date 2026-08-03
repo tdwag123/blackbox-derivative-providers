@@ -158,7 +158,7 @@ class GPFluxST:
             nu=2.5,
         )
 
-        # constructs GP model, fits it to standardized data,
+        # constructs GP model, fits it to standardized data...
         fitted_gp = GaussianProcessRegressor(
             kernel=(signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds="fixed")),
             alpha=self.jitter,
@@ -169,7 +169,7 @@ class GPFluxST:
         )
         fitted_gp.fit(X, y)
 
-        # then extracts signal & noise portions of its fitted kernel
+        # ...then extracts signal & noise portions of its fitted kernel
         # fitted_gp.kernel_ = (signal kernel) + (white/noise kernel)
         # 
         # ├── k1 = fitted_signal_kernel
@@ -229,14 +229,18 @@ class GPFluxST:
         """
         s, T = np.broadcast_arrays(np.asarray(s_q, dtype=float), np.asarray(T_q, dtype=float))
         output_shape = s.shape
+
         X_raw = np.column_stack([s.ravel(), T.ravel()])
         X = (X_raw - self.x_mean_) / self.x_scale_
         latent_standardized = (self._K(X, self.X_train_) @ self.alpha_)
         gradient_standardized = np.empty((X.shape[0], 2), dtype=float)
+
         for dim in range(2):
             gradient_standardized[:, dim] = (self._dK_dx(X, self.X_train_, dim) @ self.alpha_)
+
         latent_physical = (self.y_mean_ + self.y_scale_ * latent_standardized)
         gradient_physical = (self.y_scale_ * gradient_standardized / self.x_scale_[None, :])
+        
         sign = -1.0 if self.learn_neg_flux else 1.0
         q = sign * latent_physical
         dq_ds = sign * gradient_physical[:, 0]
