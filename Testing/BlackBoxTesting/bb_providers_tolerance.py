@@ -17,6 +17,7 @@ from Data.BlackBoxOracle.blackboxoracle import (  # noqa: E402
     physical_flux,
     physical_flux_derivatives,
 )
+from Data.BlackBoxOracle.tabularoracle import make_tabular_oracle
 
 # ----------------------- import derivative providers ------------------------------------------------------------------
 from Methods.TabularDataMethods.KernelMethods import KernelDerivativeProviderST  # noqa: E402
@@ -994,10 +995,19 @@ def analytic_flux_for_config(config):
     return flux_law
 
 
-def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None, noisy=True, seed=0):
+def build_provider(
+    method,
+    oracle_config="nonlinear_high_noise",
+    *,
+    x_mesh=None,
+    noisy=True,
+    seed=0,
+    provider_options=None,
+):
     # This mirrors the tabular build_provider pattern: return a dictionary with
     # a flux law callable and metadata for the comparison runner.
     method_key, method_options = parse_method_spec(method)
+    method_options = {**method_options, **(provider_options or {})}
     start = time.perf_counter()
 
     if method_key == "analytic":
@@ -1040,6 +1050,8 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
 
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
+        s_bounds=method_options.get("s_bounds", AdaptiveBBOptions.s_bounds),
+        T_bounds=method_options.get("T_bounds", AdaptiveBBOptions.T_bounds),
         sample_radius=method_options.get("sample_radius", sample_radius_default),
         validation_radius_factor=method_options.get(
             "validation_radius_factor",
@@ -1071,8 +1083,10 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
         ),
         mesh_spacing=mesh_spacing,
     )
-
-    oracle = make_diffusion_oracle(oracle_config, seed=seed, noisy=noisy)
+    if Path(str(oracle_config)).suffix.lower() == ".csv":
+        oracle = make_tabular_oracle(oracle_config, noisy=noisy)
+    else:
+        oracle = make_diffusion_oracle(oracle_config, seed=seed, noisy=noisy)
     provider = AdaptiveBlackBoxProvider(
         method_key=method_key,
         oracle=oracle,
