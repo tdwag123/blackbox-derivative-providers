@@ -20,7 +20,15 @@ from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
 )
 
 
-def build_test_provider(method, oracle_config, *, x_mesh=None, noisy=True, seed=0):
+def build_test_provider(
+    method,
+    oracle_config,
+    *,
+    x_mesh=None,
+    noisy=True,
+    seed=0,
+    provider_options=None,
+):
     method_text = str(method)
     if method_text.lower().startswith("moving_"):
         return build_moving_provider(
@@ -37,6 +45,7 @@ def build_test_provider(method, oracle_config, *, x_mesh=None, noisy=True, seed=
             x_mesh=x_mesh,
             noisy=noisy,
             seed=seed,
+            provider_options=provider_options,
         )
     return build_provider(
         method,
@@ -78,11 +87,14 @@ def oracle_result_name(oracle_config):
     return str(oracle_config)
 
 
-def newton(model, reference_model, x_mesh):
+def newton(model, reference_model, x_mesh, pressure=False):
     # This function is the actual experiment. The adaptive blackbox provider is
     # only called through timed_flux_law inside NM below.
     timed_flux_law = TimedFluxLaw(model["flux"])
     t0 = time.perf_counter()
+
+    if pressure:
+        reference_model = None
 
     # Reference solve uses the analytic flux for the same oracle configuration.
     # This does not mutate the blackbox provider.
@@ -100,15 +112,24 @@ def newton(model, reference_model, x_mesh):
     else:
         U_ref = None
 
+    if pressure:
+        T_dirichlet_left = 3000.0
+        T_dirichlet_right = 0.0
+        nsource = lambda T, xg: 0.0
+    else:
+        T_dirichlet_left = 0.0 
+        T_dirichlet_right = 1.5
+        nsource = source
+
     try:
         # Newton calls model["flux"], which may sample the oracle and fit local
         # surrogates. No other metric calls it.
         U, residual_history, num_iterations = NM(
             x_mesh,
             timed_flux_law,
-            source,
-            T_dirichlet_left=0.0,
-            T_dirichlet_right=1.5,
+            nsource,
+            T_dirichlet_left=T_dirichlet_left,
+            T_dirichlet_right=T_dirichlet_right,
             tol=1e-8,
             maxiter=40,
             verbose=False,
@@ -150,7 +171,6 @@ def newton(model, reference_model, x_mesh):
     row.update(diagnostics)
     return row
 
-
 def make_experiment_dir(output_dir, exp_name):
     # Avoid overwriting previous runs by appending _1, _2, ... if needed.
     safe_exp_name = "".join(
@@ -172,7 +192,7 @@ def make_experiment_dir(output_dir, exp_name):
         counter += 1
 
 
-def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
+def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=False):
     # Main blackbox comparison runner. It intentionally does NOT run a separate
     # 500-point clean accuracy pass, because that would call another adaptive
     # provider and create misleading results.
@@ -182,6 +202,12 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
     result_paths = []
 
     x_mesh = np.linspace(0.0, 1.0, 21)
+    provider_options = None
+    if pressure:
+        provider_options = {
+            "s_bounds": (-5000.0, 0.0),
+            "T_bounds": (0.0, 3000.0),
+        }
 
     for oracle_config in oracle_configs:
         is_csv = is_csv_oracle_config(oracle_config)
@@ -223,6 +249,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
                     x_mesh=x_mesh,
                     noisy=noisy,
                     seed=seed,
+                    provider_options=provider_options,
                 )
                 row = {
                     "experiment": exp_name,
@@ -235,7 +262,7 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0):
 
                 # This is the only place in the comparison loop where the
                 # experiment provider is evaluated.
-                row.update(newton(model, reference_model, x_mesh))
+                row.update(newton(model, reference_model, x_mesh, pressure=pressure))
                 print("done")
             except Exception as exc:
                 print(":(")
@@ -270,7 +297,12 @@ if __name__ == "__main__":
     #     "nonlinear_high_noise",
     # ]
 
-    exp_name = "dataset_test"
+    # exp_name = "dataset_test"
+    # methods = ['tolerance_bb_rbf']
+    # oracle_configs = [ROOT / 'Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv']
+    # comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)
+
+    exp_name = "pressure"
     methods = ['tolerance_bb_rbf']
-    oracle_configs = [ROOT / 'Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv']
-    comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)
+    oracle_configs = [ROOT / "Data/PressureDataset/pressure_filtered_5.csv"]
+    comparison(exp_name, methods, oracle_configs, noisy=True, pressure=True)

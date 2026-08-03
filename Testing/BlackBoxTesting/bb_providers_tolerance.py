@@ -759,10 +759,19 @@ def analytic_flux_for_config(config):
     return flux_law
 
 
-def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None, noisy=True, seed=0):
+def build_provider(
+    method,
+    oracle_config="nonlinear_high_noise",
+    *,
+    x_mesh=None,
+    noisy=True,
+    seed=0,
+    provider_options=None,
+):
     # This mirrors the tabular build_provider pattern: return a dictionary with
     # a flux law callable and metadata for the comparison runner.
     method_key, method_options = parse_method_spec(method)
+    method_options = {**method_options, **(provider_options or {})}
     start = time.perf_counter()
 
     if method_key == "analytic":
@@ -783,6 +792,8 @@ def build_provider(method, oracle_config="nonlinear_high_noise", *, x_mesh=None,
 
     # Mesh spacing sets the minimum allowed sampling radius.
     options = AdaptiveBBOptions(
+        s_bounds=method_options.get("s_bounds", AdaptiveBBOptions.s_bounds),
+        T_bounds=method_options.get("T_bounds", AdaptiveBBOptions.T_bounds),
         sample_radius=method_options.get("sample_radius", AdaptiveBBOptions.sample_radius),
         validation_radius_factor=method_options.get(
             "validation_radius_factor",
