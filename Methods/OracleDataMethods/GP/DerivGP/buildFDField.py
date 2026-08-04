@@ -67,7 +67,8 @@ def build_finite_difference_field(
     output_file = None,
 ):
     """return derivative pseudo-observations and propagated learned-noise covariance"""
-    anchor = np.asarray(anchor, dtype=float).reshape(2)
+    anchor = np.asarray(anchor, dtype=float).reshape(-1)
+    anchor = (float(anchor[0]), float(anchor[1]))
     s_anchor, T_anchor = anchor
     s_radius = float(s_radius)
     T_radius = float(T_radius)
@@ -89,8 +90,14 @@ def build_finite_difference_field(
     point_index = {}
 
     def add_point(point):
-        key = tuple(np.round(point, 14))
+        point = np.asarray(point, dtype=float).reshape(-1)
+        stored_point = (float(point[0]), float(point[1]))
+        key = (round(stored_point[0], 12), round(stored_point[1], 12))
+        if key not in point_index:
+            point_index[key] = len(points)
+            points.append(stored_point)
         return point_index[key]
+        
     n = centers.shape[0]
     left = np.empty(n, dtype=int)
     right = np.empty(n, dtype=int)
@@ -98,11 +105,11 @@ def build_finite_difference_field(
     up = np.empty(n, dtype=int)
     for i, (s,T) in enumerate(centers):
         left[i] = add_point((s-h_s, T))
-        right[i] = add_point((s_h_s, T))
+        right[i] = add_point((s+h_s, T))
         down[i] = add_point((s, T-h_T))
         up[i] = add_point((s, T+h_T))
     anchor_index = add_point(anchor)
-    cache_points = np.asarray(points)
+    cache_points = np.asarray(points, dtype=float)
 
     # what follows is applicable to stochastic case, where we sample repeatedly then avg
     samples = np.empty((repeats, cache_points.shape[0]))
@@ -163,6 +170,7 @@ def build_finite_difference_field(
 
     return field
 
+"""smoke test; check if generates an appropriate deriv field"""
 if __name__ == "__main__":
     rng = np.random.default_rng(42)
     hidden_noise_std = 0.05
