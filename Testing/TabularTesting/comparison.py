@@ -6,6 +6,12 @@ import time
 import numpy as np
 import pandas as pd
 
+# Error columns:
+# - FEM_sol_err compares the experiment solve to the coarse analytic-flux FEM solve.
+# - true_sol_err compares to a non-surrogate reference on the same coarse nodes.
+#   Linear datasets use the closed-form solution; nonlinear datasets use a much
+#   finer analytic-flux FEM solve sampled back onto the coarse mesh.
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
 
@@ -19,6 +25,7 @@ from Testing.TabularTesting.providers import build_provider
 CLEAN_EVAL_POINTS = 500
 NOISY_TEST_POINTS = 500
 PHYSICS_TOL = 1.0e-10
+FINE_TRUE_NODES = 201
 
 def evaluate_flux_law_on_points(flux_law, s_values, T_values):
     q_pred = np.zeros_like(s_values, dtype=float)
@@ -153,10 +160,41 @@ class TimedFluxLaw:
         self.calls += 1
         return result
 
-def newton(model, reference_model):
-    def source(T, xg):
-        return 1.0
 
+def source(T, xg):
+    return 1.0
+
+
+def relative_error(solution, reference):
+    return float(np.linalg.norm(solution - reference) / np.linalg.norm(reference))
+
+
+def linear_true_solution(x_mesh, k0, alpha, beta):
+    if alpha != 0.0 or beta != 0.0:
+        return None
+    return 1.5 * x_mesh + x_mesh * (1.0 - x_mesh) / (2.0 * k0)
+
+
+def true_solution_on_mesh(x_mesh, reference_model, k0, alpha, beta):
+    linear_solution = linear_true_solution(x_mesh, k0, alpha, beta)
+    if linear_solution is not None:
+        return linear_solution
+
+    x_fine = np.linspace(float(x_mesh[0]), float(x_mesh[-1]), FINE_TRUE_NODES)
+    U_fine, _, _ = NM(
+        x_fine,
+        reference_model["flux"],
+        source,
+        T_dirichlet_left=0.0,
+        T_dirichlet_right=1.5,
+        tol=1e-10,
+        maxiter=60,
+        verbose=False,
+    )
+    return np.interp(x_mesh, x_fine, U_fine)
+
+
+def newton(model, reference_model, true_solution):
     x_mesh = np.linspace(0.0, 1.0, 21)
     TL = 0.0
     TR = 1.5
@@ -185,13 +223,15 @@ def newton(model, reference_model):
             verbose=False,
         )
 
-        err = np.linalg.norm(U - U_ref) / np.linalg.norm(U_ref)
+        FEM_sol_err = relative_error(U, U_ref)
+        true_sol_err = relative_error(U, true_solution)
         status = "ok"
 
     except Exception as exc:
         residual_history = [np.nan]
         num_iterations = np.nan
-        err = np.nan
+        FEM_sol_err = np.nan
+        true_sol_err = np.nan
         status = f"failed: {type(exc).__name__}: {exc}"
 
     elapsed = time.perf_counter() - t0
@@ -202,7 +242,8 @@ def newton(model, reference_model):
         "newton_steps": num_iterations,
         "flux_calls": timed_flux_law.calls,
         "final_residual": residual_history[-1],
-        "rel_solution_err": err,
+        "FEM_sol_err": FEM_sol_err,
+        "true_sol_err": true_sol_err,
         "solve_total_s": elapsed,
         "flux_eval_s": timed_flux_law.elapsed_s,
         "nonflux_s": elapsed - timed_flux_law.elapsed_s,
@@ -264,6 +305,8 @@ def comparison(exp_name, methods, datasets):
         )
 
         reference_model = build_provider("Analytic", df, training_df)
+        x_mesh = np.linspace(0.0, 1.0, 21)
+        true_solution = true_solution_on_mesh(x_mesh, reference_model, k0, alpha, beta)
 
         for method in methods:
             print(f"\n--- {method} ---")
@@ -287,7 +330,7 @@ def comparison(exp_name, methods, datasets):
                 print("Starting accuracy evaluation..")
                 row.update(accuracy_correctness(model, df, training_df))
                 print("Starting FEM/NM..")
-                row.update(newton(model, reference_model)) # do i need reference model everywhere?
+                row.update(newton(model, reference_model, true_solution)) # do i need reference model everywhere?
                 print("done :P")
             except Exception as exc:
                 print(":(")
