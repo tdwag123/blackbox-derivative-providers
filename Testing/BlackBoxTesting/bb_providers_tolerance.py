@@ -33,6 +33,11 @@ except (ImportError, OSError):
     GPFluxST = None
 
 try:
+    from Methods.OracleDataMethods.GP.rff_baseGP import GPFluxST as RFFBaseGPFluxST
+except (ImportError, OSError):
+    RFFBaseGPFluxST = None
+
+try:
     from Methods.OracleDataMethods.GP.baseGPDynamicRefit import GPFluxST as DynamicGPFluxST
 except (ImportError, OSError):
     DynamicGPFluxST = None
@@ -237,6 +242,7 @@ def parse_method_spec(method):
                     "training_iter",
                     "grid_size",
                     "n_virtual_per_axis",
+                    "n_rff_features",
                     "ep_max_iter",
                     "online_ep_sweeps",
                     "n_restarts_optimizer",
@@ -573,6 +579,24 @@ class AdaptiveBlackBoxProvider:
                 noise_variance=self.model_options.get("noise_variance", 1.0e-2),
             )
 
+        if self.method_key in {"bb_rff_basegp", "bb_rff_matern_gp"}:
+            if RFFBaseGPFluxST is None:
+                raise ImportError("bb_rff_basegp requires scipy RFF GP dependencies")
+            return RFFBaseGPFluxST(
+                X_scaled[:, 0],
+                X_scaled[:, 1],
+                q_data,
+                noise_std=self.model_options.get("noise_std", 0.0),
+                jitter=self.model_options.get("jitter", 1.0e-8),
+                n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+                reg_function=self.model_options.get("reg_function", 0.0),
+                kernel_variance=self.model_options.get("kernel_variance", 1.0),
+                lengthscale=self.model_options.get("lengthscale", 2.0),
+                noise_variance=self.model_options.get("noise_variance", 5.0e-2),
+                n_rff_features=self.model_options.get("n_rff_features", 500),
+                random_state=self.model_options.get("rng_seed", 0),
+            )
+
         if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
             if DynamicGPFluxST is None:
                 raise ImportError("bb_basegp_dynamic requires sklearn/scipy GP dependencies")
@@ -809,6 +833,8 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_rff_basegp",
+            "bb_rff_matern_gp",
             "bb_basegp_dynamic",
             "bb_dynamic_basegp",
             "bb_basegp_dynamic_distance",
@@ -828,6 +854,8 @@ class AdaptiveBlackBoxProvider:
             "bb_gp",
             "bb_basegp",
             "bb_matern_gp",
+            "bb_rff_basegp",
+            "bb_rff_matern_gp",
             "bb_basegp_dynamic",
             "bb_dynamic_basegp",
             "bb_basegp_dynamic_distance",
@@ -1036,6 +1064,8 @@ def build_provider(
     }:
         variance_tolerance_default = 7.5e-2
     elif method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}:
+        variance_tolerance_default = 7.5e-2
+    elif method_key in {"bb_rff_basegp", "bb_rff_matern_gp"}:
         variance_tolerance_default = 7.5e-2
     else:
         variance_tolerance_default = AdaptiveBBOptions.variance_tolerance
