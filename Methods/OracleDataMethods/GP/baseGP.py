@@ -195,7 +195,7 @@ class GPFluxST:
 
         # regularization should always be less than noise. easy way to ensure this:
         if self.reg_function > 0.0 and self.reg_function >= self.learned_noise_variance_:
-            self.reg_function = self.reg_function * self.learned_noise_variance_
+            self.reg_function = min(self.reg_function * self.learned_noise_variance_, 0.9 * self.learned_noise_variance_)
 
         self.gp_kernel_ = fitted_gp.kernel_
         self.log_marginal_likelihood_ = float(fitted_gp.log_marginal_likelihood_value_)

@@ -57,7 +57,7 @@ class GPFluxST:
 
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
-    def _sample_rff_frequencies(self, n_features, lengthscales, random_state):
+    def _sample_rff_frequencies(self, n_features, lengthscale, random_state):
         """
         RFF frequencies for a Matern-5/2 kernel.
 
@@ -85,7 +85,7 @@ class GPFluxST:
         chi2 = rng.chisquare(nu, size=(n_features, 1)) # 1 bc we want multivariate students t, not independent univariate
 
         omega = normal / np.sqrt(chi2 / nu)
-        omega = omega / lengthscales[None, :]
+        omega = omega / lengthscale[None, :]
 
         return omega
 
