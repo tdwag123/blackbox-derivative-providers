@@ -26,7 +26,7 @@ from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
 )
 
 PHYSICS_TOL = 1.0e-10
-FINE_TRUE_NODES = 201
+FINE_TRUE_NODES = 3001
 
 
 def build_test_provider(

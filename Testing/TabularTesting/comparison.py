@@ -25,7 +25,7 @@ from Testing.TabularTesting.providers import build_provider
 CLEAN_EVAL_POINTS = 500
 NOISY_TEST_POINTS = 500
 PHYSICS_TOL = 1.0e-10
-FINE_TRUE_NODES = 201
+FINE_TRUE_NODES = 3001
 
 def evaluate_flux_law_on_points(flux_law, s_values, T_values):
     q_pred = np.zeros_like(s_values, dtype=float)
