@@ -157,6 +157,8 @@ class AdaptiveBBOptions:
     # training MSE on cached points near the current query point.
     mse_tolerance: float = 2.0e-1
     variance_tolerance: float = 2.5e-3
+    use_derivative_variance_tolerance: bool = False
+    derivative_variance_tolerance: float = 2.5e-3
 
     # Enforce your rule that the sampling ball is at least twice the FEM spacing.
     min_mesh_radius_factor: float = 2.0
@@ -203,12 +205,18 @@ def parse_method_spec(method):
                 continue
             key = key.strip().lower()
             value = value.strip()
+            if key in {
+                "derivative_variance_tolerance_enabled",
+                "check_derivative_variance",
+            }:
+                key = "use_derivative_variance_tolerance"
             try:
                 if key in {
                     "sample_radius",
                     "validation_radius_factor",
                     "mse_tolerance",
                     "variance_tolerance",
+                    "derivative_variance_tolerance",
                     "mesh_spacing",
                     "gamma",
                     "epsilon",
@@ -243,6 +251,12 @@ def parse_method_spec(method):
                     "degree",
                 }:
                     options[key] = int(value)
+                elif key in {
+                    "use_derivative_variance_tolerance",
+                    "derivative_variance_tolerance_enabled",
+                    "check_derivative_variance",
+                }:
+                    options[key] = value.lower() in {"1", "true", "yes", "on"}
                 else:
                     options[key] = value
             except ValueError:
@@ -371,6 +385,7 @@ class AdaptiveBlackBoxProvider:
         self.surrogate_fit_count = 0
         self.failed_refinements = 0
         self.last_uncertainty = np.nan
+        self.last_derivative_uncertainty = np.nan
         self.uncertainty_sum = 0.0
         self.uncertainty_count = 0
         self.last_status = "not_evaluated"
@@ -440,7 +455,7 @@ class AdaptiveBlackBoxProvider:
         uncertainty = self._uncertainty(self.current_surrogate, point, result)
         self._record_uncertainty(uncertainty)
 
-        if self._uncertainty_is_ok(uncertainty):
+        if self._uncertainty_is_ok(uncertainty, result):
             self.last_status = "ok"
             return result[:3]
 
@@ -454,7 +469,7 @@ class AdaptiveBlackBoxProvider:
             result = self._surrogate_evaluate(self.current_surrogate, point)
             uncertainty = self._uncertainty(self.current_surrogate, point, result)
             self._record_uncertainty(uncertainty)
-            if self._uncertainty_is_ok(uncertainty):
+            if self._uncertainty_is_ok(uncertainty, result):
                 self.last_status = "refined_ok"
                 return result[:3]
 
@@ -569,8 +584,8 @@ class AdaptiveBlackBoxProvider:
                 n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
                 reg_function=self.model_options.get("reg_function", 0.0),
                 kernel_variance=self.model_options.get("kernel_variance", 1.0),
-                lengthscale=self.model_options.get("lengthscale", 2.0),
-                noise_variance=self.model_options.get("noise_variance", 1.0e-2),
+                lengthscale=self.model_options.get("lengthscale", 6.5),
+                noise_variance=self.model_options.get("noise_variance", 1.5e-2),
             )
 
         if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
@@ -755,23 +770,48 @@ class AdaptiveBlackBoxProvider:
     def _surrogate_evaluate(self, surrogate, point):
         scaled = self._to_scaled(point.reshape(1, 2))
         if self._surrogate_has_variance(surrogate):
-            q, dq_ds_hat, dq_dT_hat, variance = surrogate.evaluate(
+            evaluated = surrogate.evaluate(
                 np.array([scaled[0, 0]]),
                 np.array([scaled[0, 1]]),
                 return_variance=True,
             )
+            if len(evaluated) == 6:
+                (
+                    q,
+                    dq_ds_hat,
+                    dq_dT_hat,
+                    variance,
+                    dq_ds_variance_hat,
+                    dq_dT_variance_hat,
+                ) = evaluated
+            else:
+                q, dq_ds_hat, dq_dT_hat, variance = evaluated
+                dq_ds_variance_hat = np.array([np.nan])
+                dq_dT_variance_hat = np.array([np.nan])
         else:
             q, dq_ds_hat, dq_dT_hat = surrogate.evaluate(
                 np.array([scaled[0, 0]]),
                 np.array([scaled[0, 1]]),
             )
             variance = np.array([np.nan])
+            dq_ds_variance_hat = np.array([np.nan])
+            dq_dT_variance_hat = np.array([np.nan])
 
         # Chain rule: surrogate derivatives are with respect to scaled s,T.
         # Divide by physical scale to return dq/ds and dq/dT for Newton.
+        # Derivative variances get the same conversion squared.
         dq_ds = float(dq_ds_hat[0] / self.scale[0])
         dq_dT = float(dq_dT_hat[0] / self.scale[1])
-        return float(q[0]), dq_ds, dq_dT, float(variance[0])
+        dq_ds_variance = float(dq_ds_variance_hat[0] / (self.scale[0] ** 2))
+        dq_dT_variance = float(dq_dT_variance_hat[0] / (self.scale[1] ** 2))
+        return (
+            float(q[0]),
+            dq_ds,
+            dq_dT,
+            float(variance[0]),
+            dq_ds_variance,
+            dq_dT_variance,
+        )
 
     def _uncertainty(self, surrogate, point, result):
         # GP uncertainty: use predictive variance returned by the GP provider.
@@ -800,7 +840,7 @@ class AdaptiveBlackBoxProvider:
         q_scale = max(float(np.std(q_data[local])), 1.0)
         return float(mse / (q_scale**2))
 
-    def _uncertainty_is_ok(self, uncertainty):
+    def _uncertainty_is_ok(self, uncertainty, result=None):
         if not np.isfinite(uncertainty):
             return False
         if self.method_key in {
@@ -818,8 +858,24 @@ class AdaptiveBlackBoxProvider:
             "bb_monotonegp_dynamic",
             "bb_dynamic_monotonegp",
         }:
-            return uncertainty <= self.options.variance_tolerance
+            flux_ok = uncertainty <= self.options.variance_tolerance
+            if not self.options.use_derivative_variance_tolerance:
+                self.last_derivative_uncertainty = np.nan
+                return flux_ok
+            derivative_uncertainty = self._derivative_uncertainty_from_result(result)
+            self.last_derivative_uncertainty = derivative_uncertainty
+            if not np.isfinite(derivative_uncertainty):
+                return flux_ok
+            return flux_ok and derivative_uncertainty <= self.options.derivative_variance_tolerance
         return uncertainty <= self.options.mse_tolerance
+
+    def _derivative_uncertainty_from_result(self, result):
+        if result is None or len(result) < 6:
+            return np.nan
+        derivative_variances = np.asarray(result[4:6], dtype=float)
+        if not np.any(np.isfinite(derivative_variances)):
+            return np.nan
+        return float(np.nanmax(np.maximum(derivative_variances, 0.0)))
 
     def _surrogate_has_variance(self, surrogate):
         return self.method_key in {
@@ -948,6 +1004,7 @@ class AdaptiveBlackBoxProvider:
                 "bb_surrogate_fit_count": self.surrogate_fit_count,
                 "bb_failed_refinements": self.failed_refinements,
                 "bb_last_uncertainty": self.last_uncertainty,
+                "bb_last_derivative_uncertainty": self.last_derivative_uncertainty,
                 "bb_avg_uncertainty": (
                     self.uncertainty_sum / self.uncertainty_count
                     if self.uncertainty_count
@@ -957,6 +1014,12 @@ class AdaptiveBlackBoxProvider:
                 "bb_sample_radius": self.options.effective_sample_radius,
                 "bb_validation_radius": self.options.validation_radius,
                 "bb_cache_limit": self.options.max_points,
+                "bb_use_derivative_variance_tolerance": (
+                    self.options.use_derivative_variance_tolerance
+                ),
+                "bb_derivative_variance_tolerance": (
+                    self.options.derivative_variance_tolerance
+                ),
             }
         )
         if self.method_key in {
@@ -1039,6 +1102,16 @@ def build_provider(
         variance_tolerance_default = 7.5e-2
     else:
         variance_tolerance_default = AdaptiveBBOptions.variance_tolerance
+    use_derivative_variance_tolerance_default = (
+        True
+        if method_key in {"bb_basegp", "bb_matern_gp"}
+        else AdaptiveBBOptions.use_derivative_variance_tolerance
+    )
+    derivative_variance_tolerance_default = (
+        1.25
+        if method_key in {"bb_basegp", "bb_matern_gp"}
+        else AdaptiveBBOptions.derivative_variance_tolerance
+    )
     points_per_dim_default = (
         20
         if method_key in {"bb_monotonegp_dynamic", "bb_dynamic_monotonegp"}
@@ -1087,6 +1160,14 @@ def build_provider(
         variance_tolerance=method_options.get(
             "variance_tolerance",
             variance_tolerance_default,
+        ),
+        use_derivative_variance_tolerance=method_options.get(
+            "use_derivative_variance_tolerance",
+            use_derivative_variance_tolerance_default,
+        ),
+        derivative_variance_tolerance=method_options.get(
+            "derivative_variance_tolerance",
+            derivative_variance_tolerance_default,
         ),
         mesh_spacing=mesh_spacing,
     )
