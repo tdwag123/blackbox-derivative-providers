@@ -345,6 +345,52 @@ class DerivativeGPFluxST:
         baseline = self.anchor_q_ - self.k_ref_ * (X_raw[:, 0] - self.anchor_s_)
         residual = K_q @ self.alpha_ - self.anchor_residual_standardized_
         return (baseline + self.q_scale_ * residual).reshape(shape)
+    
+    def predict_variance(self, s, T):
+        """return posterior latent variances of q, dq/ds, and dq/dT in physical units.
+        for derivative quantity g with query-to-data covariance K_gd, Var[g|d] = K_gg - K_gd A^{-1} K_dg.
+        flus uncertainty is computed for the anchored difference q(x) - q(x-a), so the current model 
+        treats anchor_q as exact and has zeor flux variance at anchor."""
+        _, X, shape = self._query(s,T)
+        K_s = np.hstack([
+            self._d2K_dxdy(X, self.Z_s_, 0, 0),
+            self._d2K_dxdy(X, self.Z_T_, 0, 1),
+        ])
+        K_T = np.hstack([
+            self._d2K_dxdy(X, self.Z_s_, 1, 0),
+            self._d2K_dxdy(X, self.Z_T_, 1, 1),
+        ])
+        solved_s = cho_solve((self.L_, True), K_s.T)
+        solved_T = cho_solve((self.L_, True), K_T.T)
+        if self.kernel_nu == 1.5:
+            derivative_prior_s = (3.0 * self.variance_ / self.lengthscales_[0] ** 2)
+            derivative_prior_T = (3.0 * self.variance_ / self.lengthscales_[1] ** 2)
+        else:
+            # defaults kept from the nu = 2.5 case
+            derivative_prior_s = ((5.0 / 3.0) * self.variance_/ self.lengthscales_[0] ** 2)
+            derivative_prior_T = ((5.0 / 3.0) * self.variance_/ self.lengthscales_[1] ** 2)
+
+        var_s_standardized = (derivative_prior_s - np.sum(K_s * solved_s.T, axis=1))
+        var_T_standardized = (derivative_prior_T - np.sum(K_T * solved_T.T, axis=1))
+        anchor = np.array([[self.anchor_s_, self.anchor_T_]])
+        anchor = (anchor - self.x_mean_) / self.x_scale_
+        K_q = np.hstack([
+            self._dK_dy(X, self.Z_s_, 0),
+            self._dK_dy(X, self.Z_T_, 1),
+        ])
+        K_anchor = np.hstack([
+            self._dK_dy(anchor, self.Z_s_, 0),
+            self._dK_dy(anchor, self.Z_T_, 1),
+        ])
+        K_delta = K_q - K_anchor
+        solved_q = cho_solve((self.L_, True), K_delta.T)
+        prior_flux_difference = (2.0 * self.variance_ - 2.0 * self._K(X, anchor).reshape(-1))
+        var_q_standardized = (prior_flux_difference - np.sum(K_delta * solved_q.T, axis=1))
+        var_q = self.q_scale_**2 * np.maximum(var_q_standardized, 0.0)
+        var_dq_ds = (self.q_scale_ / self.x_scale_[0]) ** 2 * np.maximum(var_s_standardized, 0.0)
+        var_dq_dT = (self.q_scale_ / self.x_scale_[1]) ** 2 * np.maximum(var_T_standardized, 0.0)
+        return var_q.reshape(shape), var_dq_ds.reshape(shape), var_dq_dT.reshape(shape)
+        
 
     def integrate_flux(self, s, T, n_quad=20):
         """reconstructs q by integrating conservative derivative field. path first integrates
@@ -368,11 +414,14 @@ class DerivativeGPFluxST:
             q[i] = self.anchor_q_ + integral_s + integral_T
         return q.reshape(s.shape)
 
-    def evaluate(self, s, T, integrate=False):
+    def evaluate(self, s, T, integrate=False, return_variance=False):
         "provider interface returning q, dq/ds, dq/dT in physical units"
         dq_ds, dq_dT = self.predict_derivatives(s, T)
         q = self.integrate_flux(s, T) if integrate else self.predict_flux(s, T)
-        return q, dq_ds, dq_dT
+        if not return_variance:
+            return q, dq_ds, dq_dT
+        var_q, var_dq_ds, var_dq_dT = self.predict_variance(s,T)
+        return q, dq_ds, dq_dT, var_q, var_dq_ds, var_dq_dT
 
     def physics_diagnostics(self, s_bounds, T_bounds, n=41):
         """measure diffusion-sign and conductivity-floor violations on a grid. for thermal
@@ -405,7 +454,7 @@ if __name__ == "__main__":
     s = np.linspace(s_bounds[0], s_bounds[1], 40)
     T = np.linspace(T_bounds[0], T_bounds[1], 40)
     S, TT = np.meshgrid(s, T, indexing="ij")
-    q, dq_ds, dq_dT = model.evaluate(S, TT)
+    q, dq_ds, dq_dT, var_q, var_dq_ds, var_dq_dT = model.evaluate(S, TT, return_variance=True)
     q_true = -(1.25 * (1.0 + 0.18 * TT**2) + 0.12 * S**2) * S
     dq_ds_true = -(1.25 * (1.0 + 0.18 * TT**2) + 0.36 * S**2)
     dq_dT_true = -0.45 * TT * S
@@ -419,6 +468,9 @@ if __name__ == "__main__":
     print("q RMSE:", rmse(q, q_true))
     print("dq/ds RMSE:", rmse(dq_ds, dq_ds_true))
     print("dq/dT RMSE:", rmse(dq_dT, dq_dT_true))
+    print("var q: ", var_q)
+    print("var dq_ds: ", var_dq_ds)
+    print("var_dq_dT: ", var_dq_dT)
     print(model.physics_diagnostics(tuple(s_bounds), tuple(T_bounds)))
   
 
