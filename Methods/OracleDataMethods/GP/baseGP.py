@@ -254,11 +254,30 @@ class GPFluxST:
             )
             variance_standardized = self.variance_ - np.sum(K_query_train * solved.T, axis=1)
             variance = self.y_scale_**2 * np.maximum(variance_standardized, 0.0)
+
+            derivative_variances = []
+            for dim in range(2):
+                derivative_covariance = self._dK_dx(X, self.X_train_, dim)
+                solved_derivative = cho_solve(
+                    (self.training_cholesky_, True), 
+                    derivative_covariance.T,
+                    check_finite=False)
+                derivative_prior_variance = ((5.0 / 3.0) * self.variance_ / self.lengthscales_[dim] ** 2)
+                derivative_variance_standardized = (
+                    derivative_prior_variance 
+                    - np.sum(derivative_covariance * solved_derivative.T, axis=1))
+                derivative_variance_physical = (
+                    (self.y_scale_ / self.x_scale_[dim]) ** 2 
+                    * np.maximum(derivative_variance_standardized, 0.0))
+                derivative_variances.append(derivative_variance_physical)
+
             return (
                 q.reshape(output_shape),
                 dq_ds.reshape(output_shape),
                 dq_dT.reshape(output_shape),
                 variance.reshape(output_shape),
+                derivative_variances[0].reshape(output_shape),
+                derivative_variances[1].reshape(output_shape),
             )
 
         return (
