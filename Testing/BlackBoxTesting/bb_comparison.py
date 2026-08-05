@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import curve_fit
 
 # Error columns:
 # - FEM_sol_err compares the experiment solve to the coarse analytic-flux FEM solve.
@@ -27,6 +28,9 @@ from Testing.BlackBoxTesting.bb_providers_tolerance import (  # noqa: E402
 
 PHYSICS_TOL = 1.0e-10
 FINE_TRUE_NODES = 3001
+PRESSURE_SOURCE_VALUE = 0.2
+PRESSURE_T_LEFT = 1500.0
+PRESSURE_T_RIGHT = 0.0
 
 
 def build_test_provider(
@@ -112,6 +116,14 @@ def source(T, xg):
     return 1.0
 
 
+def pressure_source(T, xg):
+    return PRESSURE_SOURCE_VALUE
+
+
+def pressure_boundary_conditions():
+    return PRESSURE_T_LEFT, PRESSURE_T_RIGHT
+
+
 def is_csv_oracle_config(oracle_config):
     return Path(str(oracle_config)).suffix.lower() == ".csv"
 
@@ -124,6 +136,21 @@ def oracle_result_name(oracle_config):
 
 def relative_error(solution, reference):
     return float(np.linalg.norm(solution - reference) / np.linalg.norm(reference))
+
+
+def build_pressure_reference_flux(oracle_config):
+    df = pd.read_csv(oracle_config)
+
+    model = lambda q, a, b: b * q**2 + a * q
+    (a, b), _ = curve_fit(model, df["q_noisy"], -df["s"])
+
+    q = lambda s: (-a + np.sqrt(a**2 - 4.0 * b * s)) / (2.0 * b)
+    qs = lambda s: -1.0 / np.sqrt(a**2 - 4.0 * b * s)
+
+    def flux_law(s, T, xg):
+        return float(q(s)), float(qs(s)), 0.0
+
+    return {"method": "darcy_forchheimer_fit", "flux": flux_law}
 
 
 def linear_true_solution(x_mesh, oracle_config):
@@ -161,7 +188,12 @@ def newton(model, reference_model, x_mesh, true_solution=None, pressure=False):
     t0 = time.perf_counter()
 
     if pressure:
-        reference_model = None
+        T_dirichlet_left, T_dirichlet_right = pressure_boundary_conditions()
+        nsource = pressure_source
+    else:
+        T_dirichlet_left = 0.0
+        T_dirichlet_right = 1.5
+        nsource = source
 
     # Reference solve uses the analytic flux for the same oracle configuration.
     # This does not mutate the blackbox provider.
@@ -169,24 +201,15 @@ def newton(model, reference_model, x_mesh, true_solution=None, pressure=False):
         U_ref, _, _ = NM(
             x_mesh,
             reference_model["flux"],
-            source,
-            T_dirichlet_left=0.0,
-            T_dirichlet_right=1.5,
+            nsource,
+            T_dirichlet_left=T_dirichlet_left,
+            T_dirichlet_right=T_dirichlet_right,
             tol=1e-10,
             maxiter=40,
             verbose=False,
         )
     else:
         U_ref = None
-
-    if pressure:
-        T_dirichlet_left = 3000.0
-        T_dirichlet_right = 0.0
-        nsource = lambda T, xg: 0.1
-    else:
-        T_dirichlet_left = 0.0 
-        T_dirichlet_right = 1.5
-        nsource = source
 
     try:
         # Newton calls model["flux"], which may sample the oracle and fit local
@@ -297,8 +320,10 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=F
         params = None if is_csv else ORACLE_CONFIGS[oracle_config]
         dataset_results = []
 
-        # Analytic reference is used only for reference solution error.
-        if not is_csv:
+        # Analytic/reference model is used only for reference solution error.
+        if pressure:
+            reference_model = build_pressure_reference_flux(oracle_config)
+        elif not is_csv:
             reference_model = build_provider(
                 "Analytic",
                 oracle_config,
@@ -373,7 +398,6 @@ def comparison(exp_name, methods, oracle_configs, noisy=True, seed=0, pressure=F
 
     return result_paths
 
-
 if __name__ == "__main__":
     # exp_name = "tolerance_smoke"
     # methods = [
@@ -392,7 +416,14 @@ if __name__ == "__main__":
     # oracle_configs = [ROOT / 'Data/NoisyDeterministicOracles/datasets/nonlinear_high_noise.csv']
     # comparison(exp_name, methods, oracle_configs, noisy=True, seed=0)
 
-    exp_name = "pressure_finalver"
-    methods = ['tolerance_bb_rbf', 'tolerance_bb_basegp', 'tolerance_bb_poly']
+    exp_name = "pressure_gptrial_medium"
+    methods = [
+        'tolerance_bb_poly',
+        'tolerance_bb_basegp', 
+        'tolerance_bb_basegp_dynamic',
+        'tolerance_bb_basegp_dynamic_distance',
+        'tolerance_bb_monotonegp',
+        'tolerance_bb_monotonegp_dynamic',
+        ]
     oracle_configs = [ROOT / "Data/PressureDataset/pressure_filtered_5.csv"]
     comparison(exp_name, methods, oracle_configs, noisy=True, pressure=True)
