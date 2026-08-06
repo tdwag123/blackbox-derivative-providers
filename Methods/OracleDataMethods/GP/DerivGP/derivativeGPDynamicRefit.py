@@ -713,11 +713,13 @@ if __name__ == "__main__":
     old_slots = max_cache_size - n_new
     n_old_dropped = initial_cache_size - old_slots
     expected_fifo_old = old_points[n_old_dropped:]
+    expected_fifo_evicted = old_points[:n_old_dropped]
     old_standardized = (old_points - distance_model.x_mean_) / distance_model.x_scale_
     query_standardized = (update_anchor - distance_model.x_mean_) / distance_model.x_scale_
     old_distances = np.linalg.norm((old_standardized - query_standardized) / distance_model.lengthscales_, axis=1)
     expected_distance_indices = np.sort(np.argsort(old_distances)[:old_slots])
     expected_distance_old = old_points[expected_distance_indices]
+    expected_distance_evicted = np.delete(old_points, expected_distance_indices, axis=0)
     fifo_info = fifo_model.update_posterior(update_field, distance_based=False)
     distance_info = distance_model.update_posterior(update_field, s_query=update_anchor[0], T_query=update_anchor[1], distance_based=True)
     fifo_old_retained = fifo_model.X_dq_ds_raw_[:old_slots]
@@ -726,13 +728,21 @@ if __name__ == "__main__":
     distance_pass = np.allclose(distance_old_retained, expected_distance_old)
     print("\nFIFO update:", fifo_info)
     print("FIFO eviction correct:", fifo_pass)
+    print("FIFO evicted old points:\n", expected_fifo_evicted)
     print("\nDistance-based update:", distance_info)
     print("Distance-based eviction correct:", distance_pass)
+    print("Distance-based evicted old points:\n", expected_distance_evicted)
+    q_fifo, dq_ds_fifo, dq_dT_fifo = fifo_model.evaluate(S, TT)
+    q_distance, dq_ds_distance, dq_dT_distance = distance_model.evaluate(S, TT)
+    print("\nPost-update RMSE against exact law")
+    print("FIFO: ", "q: ", rmse(q_fifo, q_true), "dq_ds: ", rmse(dq_ds_fifo, dq_ds_true), "dq_dT: ", rmse(dq_dT_fifo, dq_dT_true))
+    print("Distance-based:", "q: ", rmse(q_distance, q_true), "dq_ds: ", rmse(dq_ds_distance, dq_ds_true), "dq_dT: ", rmse(dq_dT_distance, dq_dT_true))
+    print("\nFIFO versus distance-based prediction RMSE")
+    print("q: ", rmse(q_fifo, q_distance), "dq_ds: ", rmse(dq_ds_fifo, dq_ds_distance), "dq_dT: ", rmse(dq_dT_fifo, dq_dT_distance))
     for label, updated_model in (("FIFO", fifo_model), ("distance-based", distance_model)):
         _, _, _, _, updated_var_s, updated_var_T = updated_model.evaluate(update_anchor[0], update_anchor[1], return_variance=True)
         print(f"{label} max derivative variance at new anchor:", float(max(updated_var_s, updated_var_T)))
     if not fifo_pass or not distance_pass:
-        raise RuntimeError("Eviction smoke test failed")
-
+        raise RuntimeError("Eviction smoke test failed")    
   
 
