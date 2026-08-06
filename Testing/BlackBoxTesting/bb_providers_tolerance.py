@@ -40,9 +40,13 @@ except (ImportError, OSError):
 try:
     from Methods.OracleDataMethods.GP.DerivGP.buildFDField import build_finite_difference_field
     from Methods.OracleDataMethods.GP.DerivGP.derivativeGP import DerivativeGPFluxST
+    from Methods.OracleDataMethods.GP.DerivGP.derivativeGPDynamicRefit import (
+        DerivativeGPFluxST as DynamicDerivativeGPFluxST,
+    )
 except (ImportError, OSError):
     build_finite_difference_field = None
     DerivativeGPFluxST = None
+    DynamicDerivativeGPFluxST = None
 
 try:
     from Methods.OracleDataMethods.GP.baseGPDynamicRefit import GPFluxST as DynamicGPFluxST
@@ -144,6 +148,9 @@ class DerivativeGPAdapter:
             return_variance=True,
         )
         return q, dq_ds, dq_dT, np.maximum(var_ds, var_dT), var_ds, var_dT
+
+    def update_posterior(self, *args, **kwargs):
+        return self.model.update_posterior(*args, **kwargs)
 
 
 @dataclass # main purpose is storing data
@@ -289,6 +296,7 @@ def parse_method_spec(method):
                     "fd_n_s",
                     "fd_n_t",
                     "fd_repeats",
+                    "derivgp_max_centers",
                 }:
                     options[key] = int(value)
                 elif key in {
@@ -536,6 +544,10 @@ class AdaptiveBlackBoxProvider:
             "bb_dynamic_basegp",
             "bb_basegp_dynamic_distance",
             "bb_dynamic_basegp_distance",
+            "bb_derivgp_dynamic",
+            "bb_dynamic_derivgp",
+            "bb_derivgp_dynamic_distance",
+            "bb_dynamic_derivgp_distance",
             "bb_monotonegp_dynamic",
             "bb_dynamic_monotonegp",
         }:
@@ -651,6 +663,16 @@ class AdaptiveBlackBoxProvider:
                 raise ImportError("bb_derivgp requires derivative GP dependencies")
             return self._fit_derivative_gp()
 
+        if self.method_key in {
+            "bb_derivgp_dynamic",
+            "bb_dynamic_derivgp",
+            "bb_derivgp_dynamic_distance",
+            "bb_dynamic_derivgp_distance",
+        }:
+            if DynamicDerivativeGPFluxST is None or build_finite_difference_field is None:
+                raise ImportError("bb_derivgp_dynamic requires derivative GP dependencies")
+            return self._fit_dynamic_derivative_gp()
+
         if self.method_key in {"bb_basegp_dynamic", "bb_dynamic_basegp"}:
             if DynamicGPFluxST is None:
                 raise ImportError("bb_basegp_dynamic requires sklearn/scipy GP dependencies")
@@ -694,7 +716,7 @@ class AdaptiveBlackBoxProvider:
 
         raise ValueError(f"unknown blackbox method: {self.method_key}")
 
-    def _fit_derivative_gp(self):
+    def _build_derivative_field(self):
         anchor = self._to_scaled(self.current_query_point.reshape(1, 2))[0]
 
         def cached_scaled_oracle(s, T):
@@ -705,7 +727,7 @@ class AdaptiveBlackBoxProvider:
                 values.ravel()[index] = self.cache.evaluate(physical[0], physical[1])
             return values
 
-        field = build_finite_difference_field(
+        return build_finite_difference_field(
             cached_scaled_oracle,
             anchor=anchor,
             s_radius=self.model_options.get("fd_s_radius", self.options.effective_sample_radius),
@@ -719,6 +741,9 @@ class AdaptiveBlackBoxProvider:
             n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
             noise_variance_floor=self.model_options.get("fd_noise_variance_floor", 1.0e-12),
         )
+
+    def _fit_derivative_gp(self):
+        field = self._build_derivative_field()
         model = DerivativeGPFluxST(
             field["X_dq_ds"],
             field["dq_ds"],
@@ -734,6 +759,45 @@ class AdaptiveBlackBoxProvider:
             jitter=self.model_options.get("jitter", 1.0e-8),
             n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
             random_state=self.model_options.get("rng_seed", 0),
+        )
+        return DerivativeGPAdapter(model)
+
+    def _fit_dynamic_derivative_gp(self):
+        field = self._build_derivative_field()
+        distance_based = self.method_key in {
+            "bb_derivgp_dynamic_distance",
+            "bb_dynamic_derivgp_distance",
+        }
+        if self.current_surrogate is not None:
+            anchor = field["anchor_point"]
+            update_info = self.current_surrogate.update_posterior(
+                field,
+                s_query=anchor[0],
+                T_query=anchor[1],
+                distance_based=distance_based,
+            )
+            self.dynamic_posterior_updates += 1
+            self.dynamic_points_added += int(update_info.get("n_added", 0))
+            self.dynamic_points_dropped += int(update_info.get("n_dropped", 0))
+            return self.current_surrogate
+
+        self.surrogate_fit_count += 1
+        model = DynamicDerivativeGPFluxST(
+            field["X_dq_ds"],
+            field["dq_ds"],
+            field["X_dq_dT"],
+            field["dq_dT"],
+            field["derivative_noise_covariance"],
+            field["anchor_point"][0],
+            field["anchor_point"][1],
+            field["anchor_q"],
+            kernel_nu=self.model_options.get("kernel_nu", 1.5),
+            min_conductivity=self.model_options.get("min_conductivity", 0.0),
+            reg_derivative=self.model_options.get("reg_derivative", 1.0e-2),
+            jitter=self.model_options.get("jitter", 1.0e-8),
+            n_restarts_optimizer=self.model_options.get("n_restarts_optimizer", 0),
+            random_state=self.model_options.get("rng_seed", 0),
+            max_cache_size=self.model_options.get("derivgp_max_centers", self.options.max_points),
         )
         return DerivativeGPAdapter(model)
 
@@ -959,6 +1023,10 @@ class AdaptiveBlackBoxProvider:
             "bb_rff_matern_gp",
             "bb_derivgp",
             "bb_derivativegp",
+            "bb_derivgp_dynamic",
+            "bb_dynamic_derivgp",
+            "bb_derivgp_dynamic_distance",
+            "bb_dynamic_derivgp_distance",
             "bb_basegp_dynamic",
             "bb_dynamic_basegp",
             "bb_basegp_dynamic_distance",
@@ -998,6 +1066,10 @@ class AdaptiveBlackBoxProvider:
             "bb_rff_matern_gp",
             "bb_derivgp",
             "bb_derivativegp",
+            "bb_derivgp_dynamic",
+            "bb_dynamic_derivgp",
+            "bb_derivgp_dynamic_distance",
+            "bb_dynamic_derivgp_distance",
             "bb_basegp_dynamic",
             "bb_dynamic_basegp",
             "bb_basegp_dynamic_distance",
@@ -1141,6 +1213,10 @@ class AdaptiveBlackBoxProvider:
             "bb_dynamic_basegp",
             "bb_basegp_dynamic_distance",
             "bb_dynamic_basegp_distance",
+            "bb_derivgp_dynamic",
+            "bb_dynamic_derivgp",
+            "bb_derivgp_dynamic_distance",
+            "bb_dynamic_derivgp_distance",
             "bb_monotonegp_dynamic",
             "bb_dynamic_monotonegp",
         }:
@@ -1217,6 +1293,13 @@ def build_provider(
     elif method_key in {"bb_rff_basegp", "bb_rff_matern_gp"}:
         variance_tolerance_default = 7.5e-2
     elif method_key in {"bb_derivgp", "bb_derivativegp"}:
+        variance_tolerance_default = 7.5e-2
+    elif method_key in {
+        "bb_derivgp_dynamic",
+        "bb_dynamic_derivgp",
+        "bb_derivgp_dynamic_distance",
+        "bb_dynamic_derivgp_distance",
+    }:
         variance_tolerance_default = 7.5e-2
     else:
         variance_tolerance_default = AdaptiveBBOptions.variance_tolerance
