@@ -20,6 +20,10 @@ The constitutive law implemented here is
 
     F(u) = mu K^{-1} u + rho sqrt(u^T C u) C u.
 
+The K coefficients and the B coefficients are computed via these equations:
+    k_i = epsilon^3 d_i^2 / [150 (1 - epsilon)^2]
+    beta_i = 1.75 (1 - epsilon) / [epsilon^3 d_i]
+    
 Here ``K`` is the anisotropic permeability tensor and ``C`` is the
 anisotropic Forchheimer tensor. "Anisotropic" means the material resists
 flow differently in different directions, like wood being easier to split
