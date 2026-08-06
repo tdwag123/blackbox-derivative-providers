@@ -1,6 +1,8 @@
 """
 Multidimensional Matern-5/2 GP with a bounded, moving posterior cache. 
 
+Point eviction is distance-based.
+
 Training shapes permitted are general:
     s: (n, d_s)
     T: (n, d_T)
