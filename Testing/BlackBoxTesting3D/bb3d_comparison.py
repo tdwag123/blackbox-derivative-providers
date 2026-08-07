@@ -42,6 +42,13 @@ from Testing.BlackBoxTesting3D.bb3d_providers import build_provider  # noqa: E40
 
 
 PHYSICS_TOL = 1.0e-10
+DEFAULT_BOUNDARY_OFFSET = 1.0
+DEFAULT_BOUNDARY_GRADIENT_3D = np.array([0.8, -0.4, 0.3], dtype=float)
+
+
+def default_domain_bounds(dim: int):
+    """Default physical FEM domain: [0, 14]^dim."""
+    return [(0.0, 14.0)] * dim
 
 
 class TimedFluxLaw:
@@ -206,7 +213,7 @@ def make_experiment_dir(output_dir, exp_name):
 def default_boundary_points(dim: int, n_per_axis: int = 5, domain_bounds=None):
     """Build a uniform tensor-product grid on a rectangular box."""
     if domain_bounds is None:
-        domain_bounds = [(0.0, 14.0)] * dim
+        domain_bounds = default_domain_bounds(dim)
     if len(domain_bounds) != dim:
         raise ValueError(f"domain_bounds must have length dim={dim}")
 
@@ -341,7 +348,7 @@ def comparison(
     n_per_axis: int = 5,
     reference_n_per_axis: int | None = None,
     domain_bounds=None,
-    boundary_offset: float = 1.0,
+    boundary_offset: float = DEFAULT_BOUNDARY_OFFSET,
     boundary_gradient=None,
     noisy: bool = True,
     seed: int = 0,
@@ -366,6 +373,7 @@ def comparison(
         Optional finer analytic-oracle mesh for a stricter reference error.
     domain_bounds:
         Optional list of ``(lower, upper)`` bounds, one per coordinate direction.
+        Defaults to ``[0, 14]^dim``.
     boundary_offset, boundary_gradient:
         Parameters for the linear part of the curved Dirichlet boundary data.
     noisy:
@@ -380,8 +388,8 @@ def comparison(
     result_paths = []
 
     if boundary_gradient is None:
-        boundary_gradient = np.array([0.8, -0.4, 0.3], dtype=float)[:dim]
-    effective_domain_bounds = domain_bounds if domain_bounds is not None else [(0.0, 14.0)] * dim
+        boundary_gradient = DEFAULT_BOUNDARY_GRADIENT_3D[:dim]
+    effective_domain_bounds = domain_bounds if domain_bounds is not None else default_domain_bounds(dim)
     boundary_temperature = make_curved_boundary_temperature(
         effective_domain_bounds,
         boundary_offset,
@@ -392,7 +400,7 @@ def comparison(
     boundary_points = default_boundary_points(
         dim,
         n_per_axis=n_per_axis,
-        domain_bounds=domain_bounds,
+        domain_bounds=effective_domain_bounds,
     )
     mesh_spacing = float(np.median(np.diff(boundary_points[0])))
     reference_boundary_points = (
@@ -452,7 +460,7 @@ def comparison(
                     "dim": dim,
                     "n_per_axis": n_per_axis,
                     "reference_n_per_axis": reference_n_per_axis,
-                    "domain_bounds": str(domain_bounds if domain_bounds is not None else [(0.0, 14.0)] * dim),
+                    "domain_bounds": str(effective_domain_bounds),
                     "boundary_offset": boundary_offset,
                     "boundary_gradient": str(np.asarray(boundary_gradient, dtype=float)),
                     "noisy_oracle": noisy,

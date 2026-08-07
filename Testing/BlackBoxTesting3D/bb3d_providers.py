@@ -84,9 +84,9 @@ class AdaptiveBB3DOptions:
     # Bounds define the physical box where local samples are allowed to live.
     # For dim=2 the first two gradient bounds are used; for dim=3 all three are.
     grad_bounds: tuple[tuple[float, float], ...] = (
-        (-3.0, 3.0),
-        (-3.0, 3.0),
-        (-3.0, 3.0),
+        (-8.0, 8.0),
+        (-8.0, 8.0),
+        (-8.0, 8.0),
     )
     T_bounds: tuple[float, float] = (-5.0, 17.0)
 
@@ -107,9 +107,10 @@ class AdaptiveBB3DOptions:
     rng_seed: int = 0
     design: str = "hybrid"
     include_center: bool = True
+    allow_out_of_bounds_queries: bool = False
     oracle_key_decimals: int = 12
     active_prune_policy: str = "fifo"
-    mse_tolerance: float = 5.0e-3
+    mse_tolerance: float = 5.0e-2
     # Kept as an option for experiments, but the default is zero because FEM
     # mesh spacing has different units than the scaled constitutive state.
     min_mesh_radius_factor: float = 0.0
@@ -181,7 +182,12 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
                 "rng_seed",
             }:
                 options[key] = int(value)
-            elif key in {"include_center", "learn_neg_flux", "optimize_hyperparameters"}:
+            elif key in {
+                "include_center",
+                "allow_out_of_bounds_queries",
+                "learn_neg_flux",
+                "optimize_hyperparameters",
+            }:
                 options[key] = value.lower() in {"1", "true", "yes", "on"}
             else:
                 options[key] = value
@@ -353,8 +359,8 @@ class BaseGPVectorProvider:
         n_restarts_optimizer: int = 0,
         reg_function: float = 0.0,
         kernel_variance: float = 1.0,
-        lengthscale: float | np.ndarray = 2.0,
-        noise_variance: float = 1.0e-2,
+        lengthscale: float | np.ndarray = 1.2,
+        noise_variance: float = 1.0e-3,
         optimize_hyperparameters: bool = False,
         max_cache_size: int | None = None,
     ) -> None:
@@ -472,6 +478,12 @@ class AdaptiveLocalFluxProvider:
         state = np.asarray(np.r_[grad, T], dtype=float)
         if self._outside_bounds(state):
             self.out_of_bounds_query_count += 1
+            if not self.options.allow_out_of_bounds_queries:
+                raise ValueError(
+                    "FEM/Newton queried the black-box provider outside its "
+                    f"state bounds. state={state.tolist()}, "
+                    f"bounds={self.bounds.tolist()}"
+                )
 
         if self.surrogate is None:
             # First query: build the first local cloud around this FEM state.
@@ -540,8 +552,8 @@ class AdaptiveLocalFluxProvider:
                 ),
                 reg_function=float(self.model_options.get("reg_function", 0.0)),
                 kernel_variance=float(self.model_options.get("kernel_variance", 1.0)),
-                lengthscale=self.model_options.get("lengthscale", 2.0),
-                noise_variance=float(self.model_options.get("noise_variance", 1.0e-2)),
+                lengthscale=self.model_options.get("lengthscale", 1.2),
+                noise_variance=float(self.model_options.get("noise_variance", 1.0e-3)),
                 optimize_hyperparameters=bool(
                     self.model_options.get("optimize_hyperparameters", False)
                 ),
@@ -658,6 +670,7 @@ class AdaptiveLocalFluxProvider:
                 ),
                 "bb_uncertainty_source": self.uncertainty_source,
                 "bb_last_status": self.last_status,
+                "bb_allow_out_of_bounds_queries": self.options.allow_out_of_bounds_queries,
                 "bb_out_of_bounds_query_count": self.out_of_bounds_query_count,
                 "bb_clipped_eval_count": self.out_of_bounds_query_count,
                 "bb_sample_radius": self.options.effective_sample_radius,
@@ -749,6 +762,10 @@ def build_provider(
         rng_seed=method_options.get("rng_seed", seed),
         design=method_options.get("design", AdaptiveBB3DOptions.design),
         include_center=method_options.get("include_center", AdaptiveBB3DOptions.include_center),
+        allow_out_of_bounds_queries=method_options.get(
+            "allow_out_of_bounds_queries",
+            AdaptiveBB3DOptions.allow_out_of_bounds_queries,
+        ),
         active_prune_policy=method_options.get(
             "active_prune_policy",
             AdaptiveBB3DOptions.active_prune_policy,
