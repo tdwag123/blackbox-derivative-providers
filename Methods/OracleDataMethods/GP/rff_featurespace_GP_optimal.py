@@ -3,6 +3,7 @@ GP with RFF approximation of Matern-5/2 covariance.
 """
 
 import numpy as np
+from scipy.linalg import cho_solve
 
 class GPFluxST:
     """
@@ -14,6 +15,8 @@ class GPFluxST:
                  learn_neg_flux=True,
                  kernel_variance=1.0,
                  n_rff_features=500,
+                 alpha=0.0,
+                 p=2.0,
                  lengthscale=2.0,
                  noise_variance=1e-2,
                  random_state=0
@@ -21,6 +24,8 @@ class GPFluxST:
         self.learn_neg_flux = bool(learn_neg_flux)
         self.kernel_variance = self._validate_kernel_variance(kernel_variance)
         self.n_rff_features = self._validate_n_rff_features(n_rff_features)
+        self.alpha = self._validate_nonnegative_float(alpha, "alpha")
+        self.p = self._validate_nonnegative_float(p, "p")
         self.lengthscales = self._validate_lengthscale(lengthscale)
         self.noise_variance = self._validate_noise_variance(noise_variance)
         self.random_state = random_state
@@ -49,6 +54,13 @@ class GPFluxST:
         if n_features <= 0:
             raise ValueError("n_rff_features must be positive.")
         return n_features
+
+    @staticmethod
+    def _validate_nonnegative_float(value, name):
+        value = float(value)
+        if value < 0.0 or not np.isfinite(value):
+            raise ValueError(f"{name} must be finite and nonnegative.")
+        return value
 
     @staticmethod
     def _validate_lengthscale(lengthscale):
@@ -99,7 +111,7 @@ class GPFluxST:
 
     def _feature_map(self, X):
         """
-        Constructs RFF feature map with randomly sampled frequencies + offset.
+        Constructs RFF feature map with previously sampled frequencies + offset.
         In RBFSampler, phi(x) = sqrt(2/n_rff_features) cos(Wx + offset) where W is random_weights_ and offset is random_offset_.
         However, this assumes variance = 1.0. We add variance under square root so that inner product of feature map
         approximates correct Matern kernel k(r) = sigma_f^2 e^{-sqrt(5)r} (1+sqrt(5)r+{5r^2}{3}).
@@ -114,6 +126,19 @@ class GPFluxST:
         A = np.cos(X@self.omega.T + self.offset) 
         scale = np.sqrt(2.0 * self.kernel_variance / self.n_rff_features)
         return scale * A
+
+    def _dfeature_map_dx(self, X, dim):
+        if self.omega is None or self.offset is None:
+            raise ValueError("omega and offset undefined.")
+
+        X = np.asarray(X, dtype=float).reshape(-1, 2)
+
+        projection = X @ self.omega.T + self.offset
+        omega_dim = self.omega[:, dim]
+
+        scale = np.sqrt(2.0 * self.kernel_variance / self.n_rff_features)
+
+        return -scale * np.sin(projection) * omega_dim[None, :]
 
     def fit(self, s_train, T_train, q_train):
         self.omega, self.offset = self._sample_rff_frequencies()
@@ -143,11 +168,77 @@ class GPFluxST:
         self.y_train = (y_raw - self.y_mean) / self.y_scale
         # ----------------------------------- end of standardization ----------------------------------
 
-        self.Phi_train = self._feature_map(self.X_train)
-        
+        self.Phi_train = self._feature_map(self.X_train) # feature matrix for training points
 
+        # we want to solve for posterior mean
+        omega_norms = np.linalg.norm(self.omega, axis=1)
 
+        # frequency-weighted regularization!!
+        self.feature_precision = (
+            1.0 + self.alpha * omega_norms ** self.p
+        )
+        self.prior_precision = np.diag(self.feature_precision)
 
+        self.training_system = (self.prior_precision + (self.Phi_train.T @ self.Phi_train) / self.noise_variance)
+        self.rhs = (self.Phi_train.T @ self.y_train) / self.noise_variance
+
+        # self.weight_mean = np.linalg.solve(self.training_system, self.rhs)
+        self.training_cholesky = np.linalg.cholesky(self.training_system)
+        self.weight_mean = cho_solve(
+            (self.training_cholesky, True),
+            self.rhs,
+            check_finite=False,
+        )
         return self
 
+    def evaluate(self, s_query, T_query, return_variance=False):
+        """
+        Evaluates fitted flux model.
+        """
+        s, T = np.broadcast_arrays(np.asarray(s_query, dtype=float), np.asarray(T_query, dtype=float))
+        output_shape = s.shape
+        
+        X_raw = np.column_stack([s.ravel(), T.ravel()])
+        X = (X_raw - self.x_mean) / self.x_scale
+        Phi_query = self._feature_map(X)
+
+        y_standardized = Phi_query @ self.weight_mean
+
+        gradient_standardized = np.empty((X.shape[0], 2), dtype=float)
+        for dim in range(2):
+            dPhi = self._dfeature_map_dx(X, dim)
+            gradient_standardized[:, dim] = dPhi @ self.weight_mean
+
+        y_physical = self.y_mean + self.y_scale * y_standardized
+        gradient_physical = (
+            self.y_scale * gradient_standardized / self.x_scale[None, :]
+        )
+
+        sign = -1.0 if self.learn_neg_flux else 1.0
+        q = sign * y_physical
+        dq_ds = sign * gradient_physical[:, 0]
+        dq_dT = sign * gradient_physical[:, 1]
+
+        if return_variance:
+            solved = cho_solve(
+                (self.training_cholesky, True),
+                Phi_query.T,
+                check_finite=False,
+            )
+        
+            variance_standardized = np.sum(Phi_query * solved.T, axis=1)
+            variance = self.y_scale**2 * np.maximum(variance_standardized, 0.0)
+
+            return (
+                q.reshape(output_shape),
+                dq_ds.reshape(output_shape),
+                dq_dT.reshape(output_shape),
+                variance.reshape(output_shape),
+            )
+
+        return (
+            q.reshape(output_shape),
+            dq_ds.reshape(output_shape),
+            dq_dT.reshape(output_shape)
+        )
     
