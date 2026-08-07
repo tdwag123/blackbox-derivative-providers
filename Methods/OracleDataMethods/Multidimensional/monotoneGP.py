@@ -68,6 +68,7 @@ class MonotoneGPFluxST:
         kernel_variance=1.0,
         lengthscale=4.0,
         noise_variance=1.0e-2,
+        optimize_hyperparameters=True,
         max_cache_size=None,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
@@ -85,6 +86,7 @@ class MonotoneGPFluxST:
         self.kernel_variance = float(kernel_variance)
         self.lengthscale = lengthscale
         self.noise_variance = float(noise_variance)
+        self.optimize_hyperparameters = bool(optimize_hyperparameters)
         self.max_cache_size = (None if max_cache_size is None else int(max_cache_size))
         self.posterior_updates_ = 0
         self.total_points_added_ = 0
@@ -377,7 +379,9 @@ class MonotoneGPFluxST:
             length_scale=lengthscale, length_scale_bounds=(1e-2, 1e2), nu=2.5)
         sklearn_kernel = signal_kernel + WhiteKernel(noise_level=self.noise_variance, noise_level_bounds=(1e-10, 1e1))
         gp = GaussianProcessRegressor(kernel=sklearn_kernel, alpha=self.jitter, normalize_y=False,
-                                      n_restarts_optimizer=0, random_state=0)
+                                      n_restarts_optimizer=self.n_restarts_optimizer,
+                                      optimizer="fmin_l_bfgs_b" if self.optimize_hyperparameters else None,
+                                      random_state=0)
         gp.fit(X, y)
         fitted_signal_kernel = gp.kernel_.k1
         fitted_white_kernel = gp.kernel_.k2

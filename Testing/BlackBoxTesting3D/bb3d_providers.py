@@ -66,6 +66,24 @@ try:
 except (ImportError, OSError):
     BaseGPFluxST = None
 
+try:
+    from Methods.OracleDataMethods.Multidimensional.monotoneGP import (
+        MonotoneGPFluxST,
+    )
+except (ImportError, OSError):
+    MonotoneGPFluxST = None
+
+try:
+    from Methods.OracleDataMethods.Multidimensional.derivGP.buildFDField import (
+        build_finite_difference_field as build_md_finite_difference_field,
+    )
+    from Methods.OracleDataMethods.Multidimensional.derivGP.derivativeGP import (
+        DerivativeGPFluxST,
+    )
+except (ImportError, OSError):
+    build_md_finite_difference_field = None
+    DerivativeGPFluxST = None
+
 
 def _multiindices(n_features: int, degree: int) -> list[tuple[int, ...]]:
     """List polynomial powers up to a total degree."""
@@ -108,9 +126,11 @@ class AdaptiveBB3DOptions:
     design: str = "hybrid"
     include_center: bool = True
     allow_out_of_bounds_queries: bool = False
+    use_posterior_updates: bool = False
     oracle_key_decimals: int = 12
     active_prune_policy: str = "fifo"
     mse_tolerance: float = 5.0e-2
+    variance_tolerance: float = 5.0e-2
     # Kept as an option for experiments, but the default is zero because FEM
     # mesh spacing has different units than the scaled constitutive state.
     min_mesh_radius_factor: float = 0.0
@@ -161,15 +181,27 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
                 "sample_radius",
                 "validation_radius_factor",
                 "mse_tolerance",
+                "variance_tolerance",
                 "mesh_spacing",
                 "ridge_strength",
                 "gamma",
                 "noise_std",
                 "jitter",
                 "reg_function",
+                "reg_derivative",
                 "kernel_variance",
                 "lengthscale",
                 "noise_variance",
+                "probit_nu",
+                "ep_damping",
+                "ep_tol",
+                "fd_s_radius",
+                "fd_t_radius",
+                "fd_h_s",
+                "fd_h_t",
+                "fd_noise_variance_floor",
+                "kernel_nu",
+                "k_ref",
             }:
                 options[key] = float(value)
             elif key in {
@@ -179,12 +211,21 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
                 "refill_points",
                 "max_refinements_per_eval",
                 "max_total_refinements",
+                "n_virtual_per_axis",
+                "ep_max_iter",
+                "online_ep_sweeps",
                 "rng_seed",
+                "fd_n_s",
+                "fd_n_t",
+                "fd_repeats",
+                "derivgp_max_centers",
+                "n_restarts_optimizer",
             }:
                 options[key] = int(value)
             elif key in {
                 "include_center",
                 "allow_out_of_bounds_queries",
+                "use_posterior_updates",
                 "learn_neg_flux",
                 "optimize_hyperparameters",
             }:
@@ -417,6 +458,198 @@ class BaseGPVectorProvider:
         var_dq_dT = np.asarray(var_dq_dT, dtype=float)
         return float(np.mean(var_q) + 0.01 * (np.mean(var_dq_ds) + np.mean(var_dq_dT)))
 
+    def update(self, X_new: np.ndarray, Y_new: np.ndarray, X_query: np.ndarray) -> None:
+        """Update the fixed-hyperparameter posterior with new local q samples."""
+        X_new = np.atleast_2d(np.asarray(X_new, dtype=float))
+        Y_new = np.atleast_2d(np.asarray(Y_new, dtype=float))
+        X_query = np.atleast_2d(np.asarray(X_query, dtype=float))
+        self.model.update_posterior(
+            X_new[:, : self.dim],
+            X_new[:, self.dim : self.dim + 1],
+            Y_new,
+            s_query=X_query[:, : self.dim],
+            T_query=X_query[:, self.dim : self.dim + 1],
+        )
+
+
+class MonotoneGPVectorProvider:
+    """Adapter for Methods.OracleDataMethods.Multidimensional.monotoneGP."""
+
+    def __init__(
+        self,
+        X: np.ndarray,
+        Y: np.ndarray,
+        dim: int,
+        *,
+        noise_std: float = 0.0,
+        learn_neg_flux: bool = True,
+        n_virtual_per_axis: int = 3,
+        monotone_s_dims=None,
+        probit_nu: float = 1.0e-3,
+        ep_max_iter: int = 10,
+        online_ep_sweeps: int = 1,
+        ep_damping: float = 0.5,
+        ep_tol: float = 1.0e-5,
+        jitter: float = 1.0e-8,
+        n_restarts_optimizer: int = 0,
+        reg_function: float = 0.0,
+        reg_derivative: float = 1.0e-2,
+        kernel_variance: float = 1.0,
+        lengthscale: float | np.ndarray = 1.2,
+        noise_variance: float = 1.0e-3,
+        optimize_hyperparameters: bool = False,
+        max_cache_size: int | None = None,
+    ) -> None:
+        if MonotoneGPFluxST is None:
+            raise ImportError(
+                "bb3d_monotonegp requires Methods.OracleDataMethods.Multidimensional.monotoneGP"
+            )
+        self.dim = int(dim)
+        X = np.asarray(X, dtype=float)
+        Y = np.asarray(Y, dtype=float)
+        self.model = MonotoneGPFluxST(
+            X[:, : self.dim],
+            X[:, self.dim : self.dim + 1],
+            Y,
+            noise_std=noise_std,
+            learn_neg_flux=learn_neg_flux,
+            n_virtual_per_axis=n_virtual_per_axis,
+            monotone_s_dims=monotone_s_dims,
+            probit_nu=probit_nu,
+            ep_max_iter=ep_max_iter,
+            online_ep_sweeps=online_ep_sweeps,
+            ep_damping=ep_damping,
+            ep_tol=ep_tol,
+            jitter=jitter,
+            n_restarts_optimizer=n_restarts_optimizer,
+            reg_function=reg_function,
+            reg_derivative=reg_derivative,
+            kernel_variance=kernel_variance,
+            lengthscale=lengthscale,
+            noise_variance=noise_variance,
+            optimize_hyperparameters=optimize_hyperparameters,
+            max_cache_size=max_cache_size,
+        )
+
+    def evaluate(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return monotone-GP q and concatenate dq/dgrad_T with dq/dT."""
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        q, dq_ds, dq_dT = self.model.evaluate(
+            X[:, : self.dim],
+            X[:, self.dim : self.dim + 1],
+        )
+        q = np.asarray(q, dtype=float).reshape(X.shape[0], self.dim)
+        dq_ds = np.asarray(dq_ds, dtype=float).reshape(X.shape[0], self.dim, self.dim)
+        dq_dT = np.asarray(dq_dT, dtype=float).reshape(X.shape[0], self.dim, 1)
+        return q, np.concatenate([dq_ds, dq_dT], axis=2)
+
+    def uncertainty(self, X: np.ndarray) -> float:
+        """Return a scalar monotone-GP posterior-variance signal."""
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        _, _, _, var_q, var_dq_ds, var_dq_dT = self.model.evaluate(
+            X[:, : self.dim],
+            X[:, self.dim : self.dim + 1],
+            return_variance=True,
+        )
+        var_q = np.asarray(var_q, dtype=float)
+        var_dq_ds = np.asarray(var_dq_ds, dtype=float)
+        var_dq_dT = np.asarray(var_dq_dT, dtype=float)
+        return float(np.mean(var_q) + 0.01 * (np.mean(var_dq_ds) + np.mean(var_dq_dT)))
+
+    def update(self, X_new: np.ndarray, Y_new: np.ndarray, X_query: np.ndarray) -> None:
+        """Update the EP posterior with new local q samples."""
+        X_new = np.atleast_2d(np.asarray(X_new, dtype=float))
+        Y_new = np.atleast_2d(np.asarray(Y_new, dtype=float))
+        X_query = np.atleast_2d(np.asarray(X_query, dtype=float))
+        self.model.update_posterior(
+            X_new[:, : self.dim],
+            X_new[:, self.dim : self.dim + 1],
+            Y_new,
+            s_query=X_query[:, : self.dim],
+            T_query=X_query[:, self.dim : self.dim + 1],
+        )
+
+
+class DerivativeGPVectorProvider:
+    """Adapter for the multidimensional finite-difference-field DerivGP.
+
+    This provider is still black-box in the important sense: it never receives
+    exact oracle derivatives. The finite-difference field is built from nearby
+    q-only oracle calls, and the DerivGP smooths those derivative estimates.
+    """
+
+    def __init__(
+        self,
+        field: dict,
+        dim: int,
+        *,
+        kernel_nu: float = 1.5,
+        k_ref: float | None = None,
+        reg_derivative: float = 1.0e-2,
+        jitter: float = 1.0e-8,
+        n_restarts_optimizer: int = 0,
+        random_state: int = 0,
+        max_cache_size: int | None = None,
+    ) -> None:
+        if DerivativeGPFluxST is None:
+            raise ImportError(
+                "bb3d_derivgp requires Methods.OracleDataMethods.Multidimensional.derivGP"
+            )
+        self.dim = int(dim)
+        self.model = DerivativeGPFluxST(
+            field["X_derivative"],
+            field["derivatives"],
+            field["derivative_noise_covariance"],
+            field["anchor_s"],
+            field["anchor_T"],
+            field["anchor_q"],
+            kernel_nu=kernel_nu,
+            k_ref=k_ref,
+            reg_derivative=reg_derivative,
+            jitter=jitter,
+            n_restarts_optimizer=n_restarts_optimizer,
+            random_state=random_state,
+            max_cache_size=max_cache_size,
+        )
+
+    def evaluate(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return DerivGP q and concatenate dq/dgrad_T with dq/dT."""
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        q, dq_ds, dq_dT = self.model.evaluate(
+            X[:, : self.dim],
+            X[:, self.dim : self.dim + 1],
+        )
+        q = np.asarray(q, dtype=float).reshape(X.shape[0], self.dim)
+        dq_ds = np.asarray(dq_ds, dtype=float).reshape(X.shape[0], self.dim, self.dim)
+        dq_dT = np.asarray(dq_dT, dtype=float).reshape(X.shape[0], self.dim, 1)
+        return q, np.concatenate([dq_ds, dq_dT], axis=2)
+
+    def uncertainty(self, X: np.ndarray) -> float:
+        """Use derivative posterior variance as the refinement signal."""
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        _, _, _, var_q, var_dq_ds, var_dq_dT = self.model.evaluate(
+            X[:, : self.dim],
+            X[:, self.dim : self.dim + 1],
+            return_variance=True,
+        )
+        derivative_variance = np.concatenate(
+            [
+                np.asarray(var_dq_ds, dtype=float).reshape(X.shape[0], -1),
+                np.asarray(var_dq_dT, dtype=float).reshape(X.shape[0], -1),
+            ],
+            axis=1,
+        )
+        return float(np.mean(var_q) + np.nanmax(np.maximum(derivative_variance, 0.0)))
+
+    def update(self, field: dict, X_query: np.ndarray) -> None:
+        """Update the derivative posterior with a newly built local FD field."""
+        X_query = np.atleast_2d(np.asarray(X_query, dtype=float))
+        self.model.update_posterior(
+            field,
+            s_query=X_query[:, : self.dim].reshape(-1),
+            T_query=X_query[:, self.dim : self.dim + 1].reshape(-1),
+        )
+
 
 class AdaptiveLocalFluxProvider:
     """Adaptive local vector surrogate around queried ``(grad_T, T)`` states."""
@@ -452,6 +685,7 @@ class AdaptiveLocalFluxProvider:
         self.last_status = "not_evaluated"
         self.uncertainty_source = "not_evaluated"
         self.out_of_bounds_query_count = 0
+        self.current_state_for_fit = None
 
     def evaluate(self, grad_T: np.ndarray, T: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Evaluate the local learned flux law at one point or a batch of points."""
@@ -489,24 +723,37 @@ class AdaptiveLocalFluxProvider:
             # First query: build the first local cloud around this FEM state.
             self._sample_neighborhood(state, self.options.initial_points(self.state_dim))
             self._prune_cache_near(state)
+            self.current_state_for_fit = state.copy()
             self._fit_surrogate()
 
         q, jac = self._surrogate_evaluate(state)
         uncertainty = self._uncertainty(state)
+        uncertainty_tolerance = self._uncertainty_tolerance()
 
         # If the local fit is poor, add nearby oracle samples and refit.
         # The oracle still supplies only q values; derivatives come from the fit.
         refinements = 0
         while (
-            uncertainty > self.options.mse_tolerance
+            uncertainty > uncertainty_tolerance
             and refinements < self.options.max_refinements_per_eval
             and self.refinement_count < self.options.max_total_refinements
         ):
-            self._sample_neighborhood(state, self.options.refill_points)
-            self._prune_cache_near(state)
-            self._fit_surrogate()
+            new_samples = self._sample_neighborhood(state, self.options.refill_points)
+            if (
+                self.options.use_posterior_updates
+                and isinstance(
+                    self.surrogate,
+                    (BaseGPVectorProvider, MonotoneGPVectorProvider, DerivativeGPVectorProvider),
+                )
+            ):
+                self._update_surrogate(new_samples, state)
+            else:
+                self._prune_cache_near(state)
+                self.current_state_for_fit = state.copy()
+                self._fit_surrogate()
             q, jac = self._surrogate_evaluate(state)
             uncertainty = self._uncertainty(state)
+            uncertainty_tolerance = self._uncertainty_tolerance()
             refinements += 1
             self.refinement_count += 1
 
@@ -514,15 +761,76 @@ class AdaptiveLocalFluxProvider:
         self.last_uncertainty = float(uncertainty)
         self.uncertainty_sum += float(uncertainty)
         self.uncertainty_count += 1
-        self.last_status = "ok" if uncertainty <= self.options.mse_tolerance else "accepted_high_mse"
+        self.last_status = (
+            "ok" if uncertainty <= uncertainty_tolerance else "accepted_high_uncertainty"
+        )
         A = jac[:, : self.dim]
         b = jac[:, self.dim]
         return q, A, b
 
+    def _build_derivative_field(self, state: np.ndarray) -> dict:
+        """Build a local FD derivative field from q-only oracle samples."""
+        if build_md_finite_difference_field is None:
+            raise ImportError(
+                "bb3d_derivgp requires the multidimensional finite-difference field builder"
+            )
+        anchor = self._to_scaled(np.asarray(state, dtype=float).reshape(1, self.state_dim))[0]
+
+        def cached_scaled_oracle(s_scaled, T_scaled):
+            s_arr = np.asarray(s_scaled, dtype=float)
+            T_arr = np.asarray(T_scaled, dtype=float)
+            if s_arr.shape[-1] != self.dim:
+                raise ValueError(f"s_scaled final axis must have length {self.dim}")
+            shape = s_arr.shape[:-1]
+            T_arr = np.broadcast_to(T_arr, shape + (1,))
+            X_scaled = np.concatenate(
+                [s_arr.reshape(-1, self.dim), T_arr.reshape(-1, 1)],
+                axis=1,
+            )
+            X_phys = self._from_scaled(X_scaled)
+            values = []
+            for point in X_phys:
+                sample_point = self._clip_sample_state(point)
+                values.append(self.cache.evaluate(sample_point))
+            return np.asarray(values, dtype=float).reshape(shape + (self.dim,))
+
+        fd_n_s = self.model_options.get("fd_n_s", 2)
+        fd_n_T = self.model_options.get("fd_n_t", 2)
+        return build_md_finite_difference_field(
+            cached_scaled_oracle,
+            anchor[: self.dim],
+            anchor[self.dim : self.dim + 1],
+            s_radius=self.model_options.get(
+                "fd_s_radius",
+                self.options.effective_sample_radius,
+            ),
+            T_radius=self.model_options.get(
+                "fd_t_radius",
+                self.options.effective_sample_radius,
+            ),
+            n_s=fd_n_s,
+            n_T=fd_n_T,
+            h_s=self.model_options.get("fd_h_s", None),
+            h_T=self.model_options.get("fd_h_t", None),
+            repeats=int(self.model_options.get("fd_repeats", 1)),
+            jitter=float(self.model_options.get("jitter", 1.0e-8)),
+            n_restarts_optimizer=int(
+                self.model_options.get("n_restarts_optimizer", 0)
+            ),
+            noise_variance_floor=float(
+                self.model_options.get("fd_noise_variance_floor", 1.0e-12)
+            ),
+        )
+
     def _fit_surrogate(self) -> None:
         """Fit the selected local model to cached oracle samples."""
         X_phys, Y = self.cache.arrays()
-        if Y.shape[0] < max(self.state_dim + 1, 6):
+        if Y.shape[0] < max(self.state_dim + 1, 6) and self.method_key not in {
+            "bb3d_derivgp",
+            "bb_derivgp",
+            "derivgp",
+            "derivativegp",
+        }:
             raise RuntimeError("not enough blackbox samples to fit local surrogate")
         X = self._to_scaled(X_phys)
         if self.method_key in {"bb3d_poly", "bb_poly", "poly"}:
@@ -559,8 +867,85 @@ class AdaptiveLocalFluxProvider:
                 ),
                 max_cache_size=self.options.max_points(self.state_dim),
             )
+        elif self.method_key in {
+            "bb3d_monotonegp",
+            "bb_monotonegp",
+            "monotonegp",
+            "monotone_gp",
+        }:
+            self.surrogate = MonotoneGPVectorProvider(
+                X,
+                Y,
+                self.dim,
+                noise_std=float(self.model_options.get("noise_std", 0.0)),
+                learn_neg_flux=bool(self.model_options.get("learn_neg_flux", True)),
+                n_virtual_per_axis=int(self.model_options.get("n_virtual_per_axis", 3)),
+                monotone_s_dims=self.model_options.get("monotone_s_dims", None),
+                probit_nu=float(self.model_options.get("probit_nu", 1.0e-3)),
+                ep_max_iter=int(self.model_options.get("ep_max_iter", 10)),
+                online_ep_sweeps=int(self.model_options.get("online_ep_sweeps", 1)),
+                ep_damping=float(self.model_options.get("ep_damping", 0.5)),
+                ep_tol=float(self.model_options.get("ep_tol", 1.0e-5)),
+                jitter=float(self.model_options.get("jitter", 1.0e-8)),
+                n_restarts_optimizer=int(
+                    self.model_options.get("n_restarts_optimizer", 0)
+                ),
+                reg_function=float(self.model_options.get("reg_function", 0.0)),
+                reg_derivative=float(self.model_options.get("reg_derivative", 1.0e-2)),
+                kernel_variance=float(self.model_options.get("kernel_variance", 1.0)),
+                lengthscale=self.model_options.get("lengthscale", 1.2),
+                noise_variance=float(self.model_options.get("noise_variance", 1.0e-3)),
+                optimize_hyperparameters=bool(
+                    self.model_options.get("optimize_hyperparameters", False)
+                ),
+                max_cache_size=self.options.max_points(self.state_dim),
+            )
+        elif self.method_key in {
+            "bb3d_derivgp",
+            "bb_derivgp",
+            "derivgp",
+            "derivativegp",
+        }:
+            if self.current_state_for_fit is None:
+                raise RuntimeError("DerivativeGP requires a current query state")
+            field = self._build_derivative_field(self.current_state_for_fit)
+            self.surrogate = DerivativeGPVectorProvider(
+                field,
+                self.dim,
+                kernel_nu=float(self.model_options.get("kernel_nu", 1.5)),
+                k_ref=self.model_options.get("k_ref", None),
+                reg_derivative=float(self.model_options.get("reg_derivative", 1.0e-2)),
+                jitter=float(self.model_options.get("jitter", 1.0e-8)),
+                n_restarts_optimizer=int(
+                    self.model_options.get("n_restarts_optimizer", 0)
+                ),
+                random_state=int(self.model_options.get("rng_seed", 0)),
+                max_cache_size=int(
+                    self.model_options.get(
+                        "derivgp_max_centers",
+                        self.options.max_points(self.state_dim),
+                    )
+                ),
+            )
         else:
             raise ValueError(f"unknown 3D blackbox method: {self.method_key}")
+        self.surrogate_fit_count += 1
+
+    def _update_surrogate(self, X_phys_new: np.ndarray, query_state: np.ndarray) -> None:
+        """Update a GP-style surrogate without rebuilding it from scratch."""
+        X_query = self._to_scaled(np.asarray(query_state, dtype=float).reshape(1, self.state_dim))
+        if isinstance(self.surrogate, DerivativeGPVectorProvider):
+            field = self._build_derivative_field(query_state)
+            self.surrogate.update(field, X_query)
+            self.surrogate_fit_count += 1
+            return
+
+        X_phys_new = np.atleast_2d(np.asarray(X_phys_new, dtype=float))
+        if X_phys_new.size == 0:
+            return
+        Y_new = np.vstack([self.cache.evaluate(point) for point in X_phys_new])
+        X_new = self._to_scaled(X_phys_new)
+        self.surrogate.update(X_new, Y_new, X_query)
         self.surrogate_fit_count += 1
 
     def _surrogate_evaluate(self, state: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -584,23 +969,49 @@ class AdaptiveLocalFluxProvider:
 
     def _uncertainty(self, state: np.ndarray) -> float:
         """Use GP posterior variance when available; otherwise validate by oracle calls."""
-        if isinstance(self.surrogate, BaseGPVectorProvider):
+        if isinstance(
+            self.surrogate,
+            (BaseGPVectorProvider, MonotoneGPVectorProvider, DerivativeGPVectorProvider),
+        ):
             scaled = self._to_scaled(state.reshape(1, self.state_dim))
-            self.uncertainty_source = "basegp_posterior_variance"
+            if isinstance(self.surrogate, MonotoneGPVectorProvider):
+                self.uncertainty_source = "monotonegp_posterior_variance"
+            elif isinstance(self.surrogate, DerivativeGPVectorProvider):
+                self.uncertainty_source = "derivgp_derivative_variance"
+            else:
+                self.uncertainty_source = "basegp_posterior_variance"
             return self.surrogate.uncertainty(scaled)
         self.uncertainty_source = "local_oracle_validation_mse"
         return self._validation_mse(state)
 
-    def _sample_neighborhood(self, state: np.ndarray, n_points: int) -> None:
-        """Add structured/random local samples around the current FEM state."""
+    def _uncertainty_tolerance(self) -> float:
+        """Use variance tolerance for GP-style uncertainty and MSE otherwise."""
+        if isinstance(
+            self.surrogate,
+            (BaseGPVectorProvider, MonotoneGPVectorProvider, DerivativeGPVectorProvider),
+        ):
+            return float(self.options.variance_tolerance)
+        return float(self.options.mse_tolerance)
+
+    def _sample_neighborhood(self, state: np.ndarray, n_points: int) -> np.ndarray:
+        """Add structured/random local samples and return the sampled states."""
         samples = [state.copy()] if self.options.include_center else []
         if self.options.design in {"axis", "hybrid"}:
             samples.extend(self._axis_samples(state))
         if self.options.design in {"random", "hybrid"}:
             samples.extend(self._random_ball_samples(state, max(0, n_points - len(samples))))
 
+        sampled = []
+        seen = set()
         for sample in samples[:n_points]:
-            self.cache.evaluate(self._clip_sample_state(sample))
+            clipped = self._clip_sample_state(sample)
+            key = tuple(np.round(clipped, self.options.oracle_key_decimals))
+            if key in seen:
+                continue
+            seen.add(key)
+            self.cache.evaluate(clipped)
+            sampled.append(clipped)
+        return np.asarray(sampled, dtype=float).reshape(-1, self.state_dim)
 
     def _prune_cache_near(self, state: np.ndarray) -> None:
         self.cache.prune(
@@ -663,6 +1074,9 @@ class AdaptiveLocalFluxProvider:
                 "bb_surrogate_fit_count": self.surrogate_fit_count,
                 "bb_failed_refinements": self.failed_refinements,
                 "bb_last_uncertainty": self.last_uncertainty,
+                "bb_uncertainty_tolerance": self._uncertainty_tolerance()
+                if self.surrogate is not None
+                else np.nan,
                 "bb_avg_uncertainty": (
                     self.uncertainty_sum / self.uncertainty_count
                     if self.uncertainty_count
@@ -671,11 +1085,14 @@ class AdaptiveLocalFluxProvider:
                 "bb_uncertainty_source": self.uncertainty_source,
                 "bb_last_status": self.last_status,
                 "bb_allow_out_of_bounds_queries": self.options.allow_out_of_bounds_queries,
+                "bb_use_posterior_updates": self.options.use_posterior_updates,
                 "bb_out_of_bounds_query_count": self.out_of_bounds_query_count,
                 "bb_clipped_eval_count": self.out_of_bounds_query_count,
                 "bb_sample_radius": self.options.effective_sample_radius,
                 "bb_validation_radius": self.options.validation_radius,
                 "bb_cache_limit": self.options.max_points(self.state_dim),
+                "bb_variance_tolerance": self.options.variance_tolerance,
+                "bb_mse_tolerance": self.options.mse_tolerance,
             }
         )
         return diag
@@ -734,6 +1151,19 @@ def build_provider(
     if len(grad_bounds) < dim:
         raise ValueError(f"grad_bounds must provide at least {dim} bounds")
 
+    derivgp_keys = {"bb3d_derivgp", "bb_derivgp", "derivgp", "derivativegp"}
+    if method_key in derivgp_keys:
+        method_options.setdefault("sample_radius", 0.35)
+        method_options.setdefault("fd_s_radius", 0.35)
+        method_options.setdefault("fd_t_radius", 0.35)
+        method_options.setdefault("fd_n_s", 3)
+        method_options.setdefault("fd_n_t", 3)
+        method_options.setdefault("kernel_nu", 2.5)
+        method_options.setdefault("reg_derivative", 1.0e-2)
+        method_options.setdefault("variance_tolerance", 3000.0)
+        method_options.setdefault("max_refinements_per_eval", 1)
+        method_options.setdefault("max_total_refinements", 2)
+
     options = AdaptiveBB3DOptions(
         grad_bounds=tuple(tuple(v) for v in grad_bounds),
         T_bounds=method_options.get("T_bounds", AdaptiveBB3DOptions.T_bounds),
@@ -766,11 +1196,19 @@ def build_provider(
             "allow_out_of_bounds_queries",
             AdaptiveBB3DOptions.allow_out_of_bounds_queries,
         ),
+        use_posterior_updates=method_options.get(
+            "use_posterior_updates",
+            AdaptiveBB3DOptions.use_posterior_updates,
+        ),
         active_prune_policy=method_options.get(
             "active_prune_policy",
             AdaptiveBB3DOptions.active_prune_policy,
         ),
         mse_tolerance=method_options.get("mse_tolerance", AdaptiveBB3DOptions.mse_tolerance),
+        variance_tolerance=method_options.get(
+            "variance_tolerance",
+            AdaptiveBB3DOptions.variance_tolerance,
+        ),
         mesh_spacing=method_options.get("mesh_spacing", mesh_spacing),
     )
     oracle = make_diffusion_oracle(oracle_config, dim=dim, seed=seed, noisy=noisy)
