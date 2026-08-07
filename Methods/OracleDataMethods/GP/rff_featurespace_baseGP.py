@@ -332,5 +332,6 @@ def main():
     print("variance before:", variance_before)
     print("variance after: ", variance_after)
 
+
 if __name__ == "__main__":
     main()
