@@ -29,8 +29,6 @@ class GPFluxST:
         noise_std=0.0,
         learn_neg_flux=True,
         jitter=1e-8,
-        n_restarts_optimizer=0,
-        reg_function=0.0,
         kernel_variance=1.0,
         lengthscale=2.0,
         noise_variance=1.0e-2,
@@ -41,13 +39,12 @@ class GPFluxST:
         random_state=0
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
-        self.jitter = float(jitter)
-        self.n_restarts_optimizer = int(n_restarts_optimizer)
-        self.reg_function = float(reg_function)
+        self.jitter = self._validate_nonnegative_float(jitter, "jitter")
         self.kernel_variance = self._validate_kernel_variance(kernel_variance)
         self.lengthscale = self._validate_lengthscale(lengthscale)
-        self.noise_variance = float(noise_variance)
+        self.noise_variance = self._validate_noise_variance(noise_variance)
         self.max_cache_size = 0 if max_cache_size is None else int(max_cache_size)
+
         self.n_rff_features = self._validate_n_rff_features(n_rff_features)
         self.alpha = self._validate_nonnegative_float(alpha, "alpha")
         self.p = self._validate_nonnegative_float(p, "p")
@@ -85,6 +82,13 @@ class GPFluxST:
             raise ValueError("lengthscale entries must be finite and positive.")
 
         return lengthscales
+
+    @staticmethod
+    def _validate_noise_variance(noise_variance):
+        variance = float(noise_variance)
+        if variance <= 0.0 or not np.isfinite(variance):
+            raise ValueError("noise_variance must be finite and positive.")
+        return variance
 
     @staticmethod
     def _validate_n_rff_features(n_rff_features):

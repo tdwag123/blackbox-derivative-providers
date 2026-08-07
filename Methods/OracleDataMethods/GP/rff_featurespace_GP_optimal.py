@@ -244,4 +244,63 @@ class GPFluxST:
             dq_ds.reshape(output_shape),
             dq_dT.reshape(output_shape)
         )
+
+def smoke_test():
+    """minimal smoke test for query-local cache eviction"""
+
+    def flux(s, T):
+        return -(1.0 + 0.1 * T**2 + 0.05 * s**2) * s
+    
+    s_train = np.linspace(-2.0, 2.0, 8)
+    T_train = np.linspace(0.5, 2.0, 8)
+    q_train = flux(s_train, T_train)
+
+    model = GPFluxST(s_train, T_train, q_train, 
+                     learn_neg_flux=True,
+                     jitter=1e-8,
+                     kernel_variance=1.0,
+                     n_rff_features=500,
+                     alpha=1e-5,
+                     p=2.0,
+                     lengthscale=2.0,
+                     noise_variance=1.0e-2,
+                     random_state=0)
+    
+    s_query = np.array([1.4, 1.6, 1.8])
+    T_query = np.array([1.4, 1.6, 1.8])
+    q_before, dq_ds_before, dq_dT_before, variance_before = model.evaluate(
+        s_query,
+        T_query,
+        return_variance=True,
+    )
+
+    s_new = np.array([1.7, 1.9])
+    T_new = np.array([1.7, 1.9])
+    q_new = flux(s_new, T_new)
+
+    q_after, dq_ds_after, dq_dT_after, variance_after = model.evaluate(
+        s_query,
+        T_query,
+        return_variance=True,
+    )
+
+    assert np.all(np.isfinite(q_after))
+    assert np.all(np.isfinite(dq_ds_after))
+    assert np.all(np.isfinite(dq_dT_after))
+    assert np.all(np.isfinite(variance_after))
+
+    print("Smoke test passed.")
+    print("q before update:", q_before)
+    print("q after update: ", q_after)
+    print("dq_ds before update:", dq_ds_before)
+    print("dq_ds after update: ", dq_ds_after)
+    print("dq_dT before update:", dq_dT_before)
+    print("dq_dT after update: ", dq_dT_after)
+    print("variance before:", variance_before)
+    print("variance after: ", variance_after)
+
+
+if __name__ == "__main__":
+    smoke_test()
+
     
