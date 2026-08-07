@@ -1,4 +1,5 @@
-"""Generic multidimensional GP-provider smoke-test infrastructure."""
+"""Generic multidimensional GP-provider smoke-test infrastructure.
+Note that we also have some cross-dimensional dependencies that impact flux."""
 
 from pathlib import Path
 import sys
@@ -10,6 +11,8 @@ sys.path.insert(0, str(HERE))
 
 from baseGP import GPFluxST
 from monotoneGP import MonotoneGPFluxST
+from derivGP.buildFDField import build_finite_difference_field
+from derivGP.derivativeGP import DerivativeGPFluxST
 
 ### ADD MORE METHODS HERE ###
 
@@ -87,16 +90,33 @@ def main():
                                 ep_max_iter=5, online_ep_sweeps=1, max_cache_size=n_train)
     monotone_fit_seconds = time.perf_counter() - fit_start
 
+    def fd_oracle(s, T):
+        q = exact_flux(s, T)
+        return q + rng.normal(0.0, 0.02, size = q.shape)
+    derivative_anchor_s = np.mean(s_train, axis=0)
+    derivative_anchor_T = np.mean(T_train, axis=0)
+    fit_start = time.perf_counter()
+    initial_field = build_finite_difference_field(fd_oracle, anchor_s=derivative_anchor_s, anchor_T=derivative_anchor_T, 
+                                                  s_radius=0.50, T_radius=0.40, n_s=3, n_T=2, repeats=1,
+                                                  n_restarts_optimizer=0)
+    derivative = DerivativeGPFluxST(initial_field["X_derivative"], initial_field["derivatives"],
+                                    initial_field["derivative_noise_covariance"], initial_field["anchor_s"],
+                                    initial_field["anchor_T"], initial_field["anchor_q"], kernel_nu=1.5,
+                                    n_restarts_optimizer=0, max_cache_size=initial_field["X_derivative"].shape[0])
+    derivative_fit_seconds = time.perf_counter() - fit_start
+
     ### ADD MORE PROVIDERS HERE WITH SAME EVALUATE/UPDATE CONTRACT ###
     
     providers = {
         "baseGP" : base,
         "monotoneGP" : monotone,
+        "derivativeGP" : derivative,
     }
 
     fit_times = {
         "baseGP" : base_fit_seconds,
-        "monotoneGP" : monotone_fit_seconds
+        "monotoneGP" : monotone_fit_seconds,
+        "derivativeGP" : derivative_fit_seconds,
     }
 
     s_test = rng.uniform([0.75, 0.30], [1.35, 0.85], size=(25, 2))
@@ -116,18 +136,36 @@ def main():
     q_new = exact_flux(s_new, T_new)
     query_s = np.mean(s_test, axis=0)
     query_T = np.mean(T_test, axis=0)
-
+    # DerivativeGP update uses a fresh local FD field centered at the triggering query.
+    update_field = build_finite_difference_field(
+        fd_oracle,
+        anchor_s=query_s,
+        anchor_T=query_T,
+        s_radius=0.35,
+        T_radius=0.30,
+        n_s=2,
+        n_T=2,
+        repeats=1,
+        n_restarts_optimizer=0,
+    )
     print("\nDistance-based posterior updates")
     print("\n--------------------------------")
     for name, model in providers.items():
         start = time.perf_counter()
-        info = model.update_posterior(
-            s_new,
-            T_new,
-            q_new,
-            s_query=query_s,
-            T_query=query_T,
-        )
+        if name == "derivativeGP":
+            info = model.update_posterior(
+                update_field,
+                s_query=query_s,
+                T_query=query_T,
+            )
+        else:
+            info = model.update_posterior(
+                s_new,
+                T_new,
+                q_new,
+                s_query=query_s,
+                T_query=query_T,
+            )
         update_seconds = time.perf_counter() - start
         print(f"\n{name}")
         print("\nEvicted old points:")
@@ -148,10 +186,12 @@ def main():
             },
         )
         print("\n")
-        assert model.cache_size_ == n_train
+        if name == "derivativeGP":
+            assert model.cache_size_ == model.max_cache_size
+        else:
+            assert model.cache_size_ == n_train
         assert np.all(np.isfinite(model.evaluate(s_test, T_test, return_variance=True)[-1]))
     print("Parallel smoke test passed.")
-
 
 if __name__ == "__main__":
     main()
