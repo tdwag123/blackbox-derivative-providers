@@ -25,12 +25,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 class GPFluxST:
-    def __init__(
-        self,
-        s_train,
-        T_train,
-        q_train,
-        *,
+    def __init__(self, s_train, T_train, q_train, *,
         noise_std=0.0,
         learn_neg_flux=True,
         jitter=1e-8,
@@ -40,19 +35,72 @@ class GPFluxST:
         lengthscale=2.0,
         noise_variance=1.0e-2,
         max_cache_size=None,
+        n_rff_features=500,
+        alpha=0.0,
+        p=2.0,
+        random_state=0
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
         self.jitter = float(jitter)
         self.n_restarts_optimizer = int(n_restarts_optimizer)
         self.reg_function = float(reg_function)
-        self.kernel_variance = float(kernel_variance)
-        self.lengthscale = lengthscale
+        self.kernel_variance = self._validate_kernel_variance(kernel_variance)
+        self.lengthscale = self._validate_lengthscale(lengthscale)
         self.noise_variance = float(noise_variance)
         self.max_cache_size = 0 if max_cache_size is None else int(max_cache_size)
+        self.n_rff_features = self._validate_n_rff_features(n_rff_features)
+        self.alpha = self._validate_nonnegative_float(alpha, "alpha")
+        self.p = self._validate_nonnegative_float(p, "p")
+        self.random_state = random_state
+
+        self.omega = None
+        self.offset = None
+
+        self.X_train = None
+        self.y_train = None
+        self.Phi_train = None
+
         self.posterior_updates_ = 0
         self.total_points_added_ = 0
         self.total_points_dropped_ = 0
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
+
+    @staticmethod
+    def _validate_kernel_variance(kernel_variance):
+        variance = float(kernel_variance)
+        if variance <= 0.0:
+            raise ValueError("kernel_variance must be positive.")
+        return variance
+
+    @staticmethod
+    def _validate_lengthscale(lengthscale):
+        lengthscales = np.asarray(lengthscale, dtype=float).reshape(-1)
+
+        if lengthscales.size == 1:
+            lengthscales = np.full(2, lengthscales.item())
+        if lengthscales.size != 2:
+            raise ValueError("lengthscale must be a positive scalar or length-2 array.")
+
+        if np.any(~np.isfinite(lengthscales)) or np.any(lengthscales <= 0.0):
+            raise ValueError("lengthscale entries must be finite and positive.")
+
+        return lengthscales
+
+    @staticmethod
+    def _validate_n_rff_features(n_rff_features):
+        n_features = int(n_rff_features)
+        if n_features != n_rff_features:
+            raise(ValueError("n_rff_features must be integer."))
+        if n_features <= 0:
+            raise ValueError("n_rff_features must be positive.")
+        return n_features
+
+    @staticmethod
+    def _validate_nonnegative_float(value, name):
+        value = float(value)
+        if value < 0.0 or not np.isfinite(value):
+            raise ValueError(f"{name} must be finite and nonnegative.")
+        return value
     
     @staticmethod
     def _matrix(values, name):

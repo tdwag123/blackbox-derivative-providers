@@ -13,6 +13,7 @@ class GPFluxST:
     """
     def __init__(self, s_train, T_train, q_train, *, 
                  learn_neg_flux=True,
+                 jitter=1e-8,
                  kernel_variance=1.0,
                  n_rff_features=500,
                  alpha=0.0,
@@ -22,6 +23,7 @@ class GPFluxST:
                  random_state=0
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
+        self.jitter = float(jitter)
         self.kernel_variance = self._validate_kernel_variance(kernel_variance)
         self.n_rff_features = self._validate_n_rff_features(n_rff_features)
         self.alpha = self._validate_nonnegative_float(alpha, "alpha")
@@ -178,9 +180,10 @@ class GPFluxST:
             1.0 + self.alpha * omega_norms ** self.p
         )
         self.prior_precision = np.diag(self.feature_precision)
+        diagonal_variance = self.noise_variance + self.jitter
 
-        self.training_system = (self.prior_precision + (self.Phi_train.T @ self.Phi_train) / self.noise_variance)
-        self.rhs = (self.Phi_train.T @ self.y_train) / self.noise_variance
+        self.training_system = (self.prior_precision + (self.Phi_train.T @ self.Phi_train) / diagonal_variance)
+        self.rhs = (self.Phi_train.T @ self.y_train) / diagonal_variance
 
         # self.weight_mean = np.linalg.solve(self.training_system, self.rhs)
         self.training_cholesky = np.linalg.cholesky(self.training_system)
