@@ -441,27 +441,36 @@ def NM(boundary_points, flux_law, source_fn, dsource_dT, boundary_conditions, to
 # =================================================================================
 
 def run_tests():
-    from newtonND_tests import dim1test, dim2test, mixed_bc_1dtest, mixed_bc_2dtest, mixed_bc_3dtest, darcy2dtest
+    from newtonND_tests import (
+        darcy2dtest,
+        darcy_anisotropic_2dtest,
+        dim1test,
+        dim2test,
+        mixed_bc_1dtest,
+        mixed_bc_2dtest,
+        mixed_bc_3dtest,
+    )
 
-    print("Running linear 1D FEM solve:")
-    dim1test()
+    # print("Running linear 1D FEM solve:")
+    # dim1test()
 
-    print("\nRunning linear 2D FEM solve:")
-    dim2test()
+    # print("\nRunning linear 2D FEM solve:")
+    # dim2test()
 
-    # darcyvis()
+    # print("\nRunning mixed Dirichlet/Neumann 1D FEM solve:")
+    # mixed_bc_1dtest()
 
-    print("\nRunning mixed Dirichlet/Neumann 1D FEM solve:")
-    mixed_bc_1dtest()
+    # print("\nRunning mixed Dirichlet/Neumann 2D FEM solve:")
+    # mixed_bc_2dtest()
 
-    print("\nRunning mixed Dirichlet/Neumann 2D FEM solve:")
-    mixed_bc_2dtest()
-
-    print("\nRunning mixed Dirichlet/Neumann 3D FEM solve:")
-    mixed_bc_3dtest()
+    # print("\nRunning mixed Dirichlet/Neumann 3D FEM solve:")
+    # mixed_bc_3dtest()
 
     print(f"\nDarcy law mixed-boundary FEM solve:")
     darcy2dtest()
+
+    print(f"\nAnisotropic Darcy law FEM solve:")
+    darcy_anisotropic_2dtest()
 
 if __name__ == "__main__":
     run_tests()
