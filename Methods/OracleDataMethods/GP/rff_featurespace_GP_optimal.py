@@ -23,7 +23,7 @@ class GPFluxST:
                  random_state=0
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
-        self.jitter = float(jitter)
+        self.jitter = self._validate_nonnegative_float(jitter, "jitter")
         self.kernel_variance = self._validate_kernel_variance(kernel_variance)
         self.n_rff_features = self._validate_n_rff_features(n_rff_features)
         self.alpha = self._validate_nonnegative_float(alpha, "alpha")
