@@ -13,6 +13,9 @@ to a monotone scalar root solve.
 
 Noise is applied only to the returned velocity observation. The deterministic
 velocity can always be recovered with noise_level="none".
+
+TO DO: look into using scipy optimizer bisector versus manual bisection.
+
 """
 
 import numpy as np
@@ -37,7 +40,7 @@ def rotation_3d_xyz(
 ):
     """Return R = Rz(gamma) @ Ry(beta) @ Rx(alpha); Columns of R are the principal 
     material axes expressed in global coordinates."""
-    
+
     a, b, g = np.deg2rad([alpha_deg, beta_deg, gamma_deg])
 
     Rx = np.array([
