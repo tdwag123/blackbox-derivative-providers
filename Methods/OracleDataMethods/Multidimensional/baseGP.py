@@ -39,6 +39,7 @@ class GPFluxST:
         kernel_variance=1.0,
         lengthscale=2.0,
         noise_variance=1.0e-2,
+        optimize_hyperparameters=True,
         max_cache_size=None,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
@@ -48,6 +49,7 @@ class GPFluxST:
         self.kernel_variance = float(kernel_variance)
         self.lengthscale = lengthscale
         self.noise_variance = float(noise_variance)
+        self.optimize_hyperparameters = bool(optimize_hyperparameters)
         self.max_cache_size = 0 if max_cache_size is None else int(max_cache_size)
         self.posterior_updates_ = 0
         self.total_points_added_ = 0
@@ -222,7 +224,8 @@ class GPFluxST:
             length_scale=lengthscale, length_scale_bounds=(1e-2, 1e2), nu=2.5)
         white_kernel = WhiteKernel(noise_level=self.noise_variance, noise_level_bounds=(1e-10, 1e1))
         fitted_gp = GaussianProcessRegressor(kernel=signal_kernel + white_kernel, alpha=self.jitter,
-                                             normalize_y=False, n_restarts_optimizer=self.n_restarts_optimizer, 
+                                             normalize_y=False, n_restarts_optimizer=self.n_restarts_optimizer,
+                                             optimizer="fmin_l_bfgs_b" if self.optimize_hyperparameters else None,
                                              random_state=0)
         fitted_gp.fit(X, y)
         fitted_signal = fitted_gp.kernel_.k1
