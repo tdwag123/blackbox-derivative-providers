@@ -345,7 +345,7 @@ def comparison(
     oracle_configs,
     *,
     dim: int = 3,
-    n_per_axis: int = 5,
+    n_per_axis: int = 16,
     reference_n_per_axis: int | None = None,
     domain_bounds=None,
     boundary_offset: float = DEFAULT_BOUNDARY_OFFSET,
@@ -508,7 +508,6 @@ if __name__ == "__main__":
         ],
         oracle_configs=["nonlinear_no_noise"],
         dim=3,
-        n_per_axis=4,
         noisy=False,
         seed=0,
     )
