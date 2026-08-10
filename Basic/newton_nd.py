@@ -1,7 +1,9 @@
 import itertools
 import numpy as np
 from scipy.interpolate import griddata
-from FEM_Structure.fem import gl2_quadrature_integration
+from scipy.sparse import coo_matrix
+from scipy.sparse.linalg import spsolve
+from FEM_Structure.fem import get_gl2_values
 
 '''
 ND (1,2,3) FEM solve with rectangular Neumann/Dirichlet boundaries.
@@ -241,73 +243,140 @@ def apply_neumann_boundaries(R_global, neumann_boundaries, grid_vars):
         else:
             raise ValueError("only dim 1, 2, 3 supported")
 
-def element_residual_tangent(a, b, T_elem, flux_law, source_fn, dsource_dT, grid_vars):
+def element_residual_tangent(a, b, T_elem, flux_law, source_fn, dsource_dT, grid_vars, compute_tangent=True):
     '''
     Construct element residual (R_elem) and Newton tangent (K_elem)
     '''
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    h = b - a
+    midpoint = 0.5 * (a + b)
+    half_width = 0.5 * h
+    jacobian = float(np.prod(half_width))
 
-    def residual_integrand(pt):
-        N = np.array(shape_fns(pt, a, b, grid_vars))
-        G = np.array(shape_grads(pt, a, b, grid_vars))
+    R_elem = np.zeros(grid_vars["nen"])
+    K_elem = np.zeros((grid_vars["nen"], grid_vars["nen"])) if compute_tangent else None
+    quad_N = []
+    quad_G = []
+    quad_pts = []
+    quad_factors = []
 
-        T_g     = N @ T_elem
-        gradT_g = G.T @ T_elem   
+    for xi, weight in zip(grid_vars["quad_pts"], grid_vars["quad_weights"]):
+        pt = midpoint + half_width * xi
+        N_1d = [(1.0 - xi[d]) * 0.5 for d in range(grid_vars["dim"])]
+        N_1d_high = [(1.0 + xi[d]) * 0.5 for d in range(grid_vars["dim"])]
+        dN_1d = [-1.0 / h, 1.0 / h]
 
-        q_g, _, _ = flux_law(gradT_g, T_g, pt)
-        q_g = np.asarray(q_g, dtype=float).reshape(-1)
+        N = np.empty(grid_vars["nen"])
+        G = np.empty((grid_vars["nen"], grid_vars["dim"]))
+        for e, offset in enumerate(grid_vars["local_corner_offsets"]):
+            value = 1.0
+            for d in range(grid_vars["dim"]):
+                value *= N_1d_high[d] if offset[d] else N_1d[d]
+            N[e] = value
+
+            for d_diff in range(grid_vars["dim"]):
+                grad_value = dN_1d[offset[d_diff]][d_diff]
+                for d_other in range(grid_vars["dim"]):
+                    if d_other != d_diff:
+                        grad_value *= N_1d_high[d_other] if offset[d_other] else N_1d[d_other]
+                G[e, d_diff] = grad_value
+
+        quad_N.append(N)
+        quad_G.append(G)
+        quad_pts.append(pt)
+        quad_factors.append(float(weight) * jacobian)
+
+    quad_N = np.asarray(quad_N, dtype=float)
+    quad_G = np.asarray(quad_G, dtype=float)
+    quad_pts = np.asarray(quad_pts, dtype=float)
+    quad_factors = np.asarray(quad_factors, dtype=float)
+    quad_T = quad_N @ T_elem
+    quad_gradT = np.einsum("qed,e->qd", quad_G, T_elem)
+    try:
+        quad_q, quad_A, quad_b = flux_law(quad_gradT, quad_T, quad_pts)
+    except (TypeError, ValueError):
+        q_values = []
+        A_values = []
+        b_values = []
+        for q_idx in range(quad_pts.shape[0]):
+            q_i, A_i, b_i = flux_law(quad_gradT[q_idx], quad_T[q_idx], quad_pts[q_idx])
+            q_values.append(q_i)
+            A_values.append(A_i)
+            b_values.append(b_i)
+        quad_q = np.asarray(q_values, dtype=float)
+        quad_A = np.asarray(A_values, dtype=float)
+        quad_b = np.asarray(b_values, dtype=float)
+    quad_q = np.asarray(quad_q, dtype=float).reshape(-1, grid_vars["dim"])
+    if compute_tangent:
+        quad_A = np.asarray(quad_A, dtype=float).reshape(-1, grid_vars["dim"], grid_vars["dim"])
+        quad_b = np.asarray(quad_b, dtype=float).reshape(-1, grid_vars["dim"])
+
+    for q_idx in range(quad_pts.shape[0]):
+        N = quad_N[q_idx]
+        G = quad_G[q_idx]
+        pt = quad_pts[q_idx]
+        T_g = quad_T[q_idx]
+        q_g = quad_q[q_idx]
         r_g = float(source_fn(T_g, pt))
+        factor = quad_factors[q_idx]
+        R_elem += factor * (-G @ q_g - N * r_g)
 
-        return np.array([
-            float(-np.dot(G[e], q_g) - N[e] * r_g)
-            for e in range(grid_vars["nen"])
-        ])
+        if compute_tangent:
+            dq_dgrad = quad_A[q_idx]
+            dq_dT = quad_b[q_idx]
+            drdt_g = float(dsource_dT(T_g, pt))
+            for i in range(grid_vars["nen"]):
+                for j in range(grid_vars["nen"]):
+                    flux_term = -np.dot(G[i], dq_dgrad @ G[j] + dq_dT * N[j])
+                    src_term = -drdt_g * N[i] * N[j]
+                    K_elem[i, j] += factor * float(flux_term + src_term)
 
-    def tangent_integrand(pt):
-        N = np.array(shape_fns(pt, a, b, grid_vars))
-        G = np.array(shape_grads(pt, a, b, grid_vars))
-
-        T_g     = N @ T_elem
-        gradT_g = G.T @ T_elem   
-
-        _, dq_dgrad, dq_dT = flux_law(gradT_g, T_g, pt)
-        dq_dgrad = np.asarray(dq_dgrad, dtype=float).reshape(grid_vars["dim"], grid_vars["dim"])
-        dq_dT = np.asarray(dq_dT, dtype=float).reshape(-1)
-        drdt_g = float(dsource_dT(T_g, pt))
-
-        K = np.zeros((grid_vars['nen'], grid_vars['nen']))
-        for i in range(grid_vars['nen']):
-            for j in range(grid_vars['nen']):
-                flux_term = -np.dot(G[i], dq_dgrad @ G[j] + dq_dT * N[j])
-                src_term  = -drdt_g * N[i] * N[j]
-                K[i,j] = float(flux_term + src_term)
-        return K
-
-
-    R_elem = gl2_quadrature_integration(residual_integrand, a=a, b=b, dim=grid_vars['dim'])
-    K_elem = gl2_quadrature_integration(tangent_integrand,  a=a, b=b, dim=grid_vars['dim'])
     return R_elem, K_elem      # R_elem: [nen], K_elem: [nen, nen]
 
-def assemble(T_nodal, flux_law, source_fn, dsource_dT, grid_vars, neumann_boundaries=None):
+def assemble(T_nodal, flux_law, source_fn, dsource_dT, grid_vars, neumann_boundaries=None, compute_tangent=True):
     '''
     Construct global residual (R) and Newton tangent (K).
     '''
 
     R_global = np.zeros(grid_vars['n_nodes'])
-    K_global = np.zeros((grid_vars['n_nodes'], grid_vars['n_nodes'])) # NOTE: should use sparse mtx 
+    K_rows = [] if compute_tangent else None
+    K_cols = [] if compute_tangent else None
+    K_data = [] if compute_tangent else None
 
     for base_idx in grid_vars['element_base_indices']:
         a, b, local_ids = element_bounds_and_ids(base_idx, grid_vars)
         T_elem = T_nodal[local_ids]
 
-        R_elem, K_elem = element_residual_tangent(a, b, T_elem, flux_law, source_fn, dsource_dT, grid_vars)
+        R_elem, K_elem = element_residual_tangent(
+            a,
+            b,
+            T_elem,
+            flux_law,
+            source_fn,
+            dsource_dT,
+            grid_vars,
+            compute_tangent=compute_tangent,
+        )
 
         for i in range(grid_vars['nen']):
             R_global[local_ids[i]] += R_elem[i]
-            for j in range(grid_vars['nen']):
-                K_global[local_ids[i], local_ids[j]] += K_elem[i,j]
+            if compute_tangent:
+                for j in range(grid_vars['nen']):
+                    K_rows.append(local_ids[i])
+                    K_cols.append(local_ids[j])
+                    K_data.append(K_elem[i,j])
 
     if neumann_boundaries:
         apply_neumann_boundaries(R_global, neumann_boundaries, grid_vars)
+
+    if compute_tangent:
+        K_global = coo_matrix(
+            (K_data, (K_rows, K_cols)),
+            shape=(grid_vars['n_nodes'], grid_vars['n_nodes']),
+        ).tocsr()
+    else:
+        K_global = None
 
     return R_global, K_global
 
@@ -326,6 +395,7 @@ def grid(boundary_points):
     local_corner_offsets = list(itertools.product([0, 1], repeat=dim))
     element_base_indices = list(itertools.product(*[range(n) for n in n_elements_per_axis]))
     all_node_indices = list(itertools.product(*[range(n) for n in n_nodes_per_axis]))
+    quad_pts, quad_weights = get_gl2_values(dim)
 
     grid_vars = {
             'coords': coords,
@@ -336,6 +406,8 @@ def grid(boundary_points):
             'local_corner_offsets': local_corner_offsets,
             'element_base_indices': element_base_indices,
             'all_node_indices': all_node_indices,
+            'quad_pts': quad_pts,
+            'quad_weights': quad_weights,
             }
     
     return grid_vars
@@ -411,7 +483,7 @@ def NM(boundary_points, flux_law, source_fn, dsource_dT, boundary_conditions, to
             return T_nodal, residual_norm_history, iteration 
 
         K_free = K_global[free_dofs][:, free_dofs]
-        dT_free = np.linalg.solve(K_free, -R_free)
+        dT_free = spsolve(K_free, -R_free)
 
         alpha = 1.0 
         if line_search: 
@@ -421,7 +493,19 @@ def NM(boundary_points, flux_law, source_fn, dsource_dT, boundary_conditions, to
                 T_trial[free_dofs] += alpha * dT_free 
                 for idx, val in dirichlet_nodes.items(): T_trial[global_id(idx, grid_vars)] = val
 
-                R_trial, _ = assemble(T_trial, flux_law, source_fn, dsource_dT, grid_vars, neumann_boundaries)
+                try:
+                    R_trial, _ = assemble(
+                        T_trial,
+                        flux_law,
+                        source_fn,
+                        dsource_dT,
+                        grid_vars,
+                        neumann_boundaries,
+                        compute_tangent=False,
+                    )
+                except ValueError:
+                    alpha *= 0.5
+                    continue
                 if np.linalg.norm(R_trial[free_dofs], ord=2) < residual_norm:
                     step_accepted = True
                     break 
