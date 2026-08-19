@@ -1,6 +1,6 @@
 # Blackbox Derivative Providers
 
-This repository contains the code for the RIPS-LLNL multidimensional black-box diffusion project. It includes the Newton/FEM solver, the 2D/3D diffusion oracle, the Gaussian-process-based flux surrogate methods, and the comparison script used to run the submitted experiments.
+This repository contains the code for the multidimensional black-box diffusion project. It includes the Newton/FEM solver, the 2D/3D diffusion oracle, the Gaussian-process-based flux surrogate methods, and the comparison script used to run the submitted experiments.
 
 ## Disclaimer
 
