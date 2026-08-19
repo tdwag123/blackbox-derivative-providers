@@ -98,6 +98,7 @@ class AdaptiveBB3DOptions:
     # comparable size. This is a radius in (grad_T, T) state space, not a
     # physical mesh radius in x/y/z space.
     sample_radius: float = 0.75
+    validation_radius_factor: float = 1.5
 
     # Point counts scale with state_dim = dim + 1 because the state is
     # [gradient components..., temperature]. In 3D, state_dim = 4, so the
@@ -134,6 +135,10 @@ class AdaptiveBB3DOptions:
         min_radius = self.min_mesh_radius_factor * self.mesh_spacing
         return max(float(self.sample_radius), float(min_radius))
 
+    @property
+    def validation_radius(self) -> float:
+        return self.validation_radius_factor * self.effective_sample_radius
+
 
 def parse_method_spec(method: str) -> tuple[str, dict]:
     """Parse compact specs like ``bb3d_basegp+sample_radius=0.5``."""
@@ -159,6 +164,7 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
         try:
             if key in {
                 "sample_radius",
+                "validation_radius_factor",
                 "variance_tolerance",
                 "mesh_spacing",
                 "noise_std",
@@ -780,7 +786,7 @@ class AdaptiveLocalFluxProvider:
         return samples
 
     def _random_ball_samples(self, state: np.ndarray, n_points: int) -> list[np.ndarray]:
-        radius = self.options.effective_sample_radius
+        radius = self.options.validation_radius
         scaled_center = self._to_scaled(state.reshape(1, self.state_dim))[0]
         samples = []
         for _ in range(n_points):
@@ -836,6 +842,7 @@ class AdaptiveLocalFluxProvider:
                 "bb_out_of_bounds_query_count": self.out_of_bounds_query_count,
                 "bb_clipped_eval_count": self.out_of_bounds_query_count,
                 "bb_sample_radius": self.options.effective_sample_radius,
+                "bb_validation_radius": self.options.validation_radius,
                 "bb_cache_limit": self.options.max_points(self.state_dim),
                 "bb_variance_tolerance": self.options.variance_tolerance,
             }
@@ -900,6 +907,10 @@ def build_provider(
         grad_bounds=tuple(tuple(v) for v in grad_bounds),
         T_bounds=method_options.get("T_bounds", AdaptiveBB3DOptions.T_bounds),
         sample_radius=method_options.get("sample_radius", AdaptiveBB3DOptions.sample_radius),
+        validation_radius_factor=method_options.get(
+            "validation_radius_factor",
+            AdaptiveBB3DOptions.validation_radius_factor,
+        ),
         initial_points_per_dim=method_options.get(
             "initial_points_per_dim",
             AdaptiveBB3DOptions.initial_points_per_dim,
@@ -958,4 +969,5 @@ def build_provider(
         "oracle_config": oracle_config,
         "dim": dim,
         "sample_radius": options.effective_sample_radius,
+        "validation_radius": options.validation_radius,
     }

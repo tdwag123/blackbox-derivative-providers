@@ -76,7 +76,7 @@ class MonotoneGPFluxST:
         lengthscale=4.0,
         noise_variance=1.0e-2,
         optimize_hyperparameters=True,
-        adaptive_virtual_refinement=True,
+        adaptive_virtual_refinement=False,
         monotonicity_check_points_per_axis=5,
         max_virtual_refinements=1,
         max_virtual_points_per_round=12,
