@@ -170,10 +170,12 @@ class MonotoneGPFluxST:
         return (X_raw - self.x_mean_) / self.x_scale_
 
     def _standardize_q(self, q_raw):
+        # The monotonicity constraints are applied to the latent quantity.
         latent_raw = -q_raw if self.learn_neg_flux else q_raw
         return (latent_raw - self.y_mean_) / self.y_scale_
 
     def _kernel_parts(self, X, Y):
+        # Kernel distances are measured after input standardization.
         delta = X[:, None, :]- Y[None, :, :]
         r = np.sqrt(np.sum((delta/self.lengthscales_) ** 2, axis=2))
         return delta, r
@@ -224,6 +226,7 @@ class MonotoneGPFluxST:
         max_iterations=None,
         damping=None,
     ):
+        # EP works on a joint vector: derivative sites first, function data last.
         m = self.X_virtual_.shape[0]
         n = self.X_train_.shape[0]
         tau = np.zeros(m + n)
@@ -247,6 +250,7 @@ class MonotoneGPFluxST:
             old_tau = tau.copy()
             old_eta = eta.copy()
             for i in range(m):
+                # Each derivative site enforces a probit soft constraint.
                 cavity_precision = (1.0/variance[i] - old_tau[i])
                 if not np.isfinite(cavity_precision) or cavity_precision <= 1e-12:
                     raise MonotoneGPError("EP cavity precision is nonpositive")
@@ -332,6 +336,7 @@ class MonotoneGPFluxST:
                 self.ep_damping_used_ = [damping] * self.output_dim_
                 return
             except (MonotoneGPError, np.linalg.LinAlgError) as error:
+                # Lower damping is slower but much more stable for small caches.
                 failures.append(str(error))
                 damping *= 0.5
                 if damping < self.ep_min_damping:
@@ -450,6 +455,7 @@ class MonotoneGPFluxST:
             self.constraint_worst_violation_ = float(last_scan["worst"])
             if last_scan["fraction"] <= 0.0 or refinement_round == rounds:
                 break
+            # Add virtual points only where the fitted derivative violates the constraint.
             min_distance = 0.5 / max(self.monotonicity_check_points_per_axis - 1, 1)
             new_points = self._select_new_virtual_points(
                 self.X_virtual_,
@@ -466,6 +472,7 @@ class MonotoneGPFluxST:
     
     def _build_joint_prior_for_output(self, output_index):
         monotone_dim = int(self.monotone_input_dims_[output_index])
+        # Joint prior over derivative virtual variables and function observations.
         Kgg = self._d2K_dxdy(self.X_virtual_, self.X_virtual_, monotone_dim, monotone_dim)
         Kgf = self._dK_dx(self.X_virtual_, self.X_train_, monotone_dim)
         Kff = self._K(self.X_train_, self.X_train_)
@@ -583,6 +590,7 @@ class MonotoneGPFluxST:
                                       optimizer="fmin_l_bfgs_b" if self.optimize_hyperparameters else None,
                                       random_state=0)
         gp.fit(X, y)
+        # Hyperparameters come from an unconstrained GP fit; EP is applied after.
         fitted_signal_kernel = gp.kernel_.k1
         fitted_white_kernel = gp.kernel_.k2
         self.variance_ = float(fitted_signal_kernel.k1.constant_value)
@@ -685,6 +693,7 @@ class MonotoneGPFluxST:
         evicted_old_points = np.empty((0, self.input_dim_))
         rejected_new_points = np.empty((0, self.input_dim_))
         if n_new >= capacity:
+            # If the update alone fills the cache, keep the new points nearest the query.
             new_distances = np.linalg.norm((X_new - X_reference) / self.lengthscales_, axis=1)
             keep_new = np.argsort(new_distances)[:capacity]
             reject_new = np.setdiff1d(np.arange(n_new), keep_new)
@@ -701,6 +710,7 @@ class MonotoneGPFluxST:
         else:
             overflow = max(0, old_size + n_new - capacity)
             if overflow:
+                # Drop old function observations farthest from the current query.
                 old_distances = np.linalg.norm((self.X_train_ - X_reference) / self.lengthscales_, axis=1)
                 evict_old = np.argsort(old_distances)[-overflow:]
                 evicted_old_points = (old_cache[evict_old].copy())

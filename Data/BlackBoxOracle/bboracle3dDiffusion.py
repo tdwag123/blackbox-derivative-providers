@@ -55,6 +55,7 @@ def physical_flux(
     grad = np.asarray(grad_T, dtype=float)
     temperature = np.asarray(T, dtype=float)
 
+    # The coefficient depends on both temperature and gradient magnitude.
     grad_norm_sq = np.sum(grad**2, axis=-1)
     coefficient = k_0 * (1.0 + alpha * temperature**2) + beta * grad_norm_sq
     return -coefficient[..., np.newaxis] * grad
@@ -115,6 +116,7 @@ def make_diffusion_oracle(
         A, b = physical_flux_derivatives(grad, temperature, k_0, alpha, beta)
 
         if noisy:
+            # The oracle noise is proportional to flux size with a unit floor.
             noise_std = sigma * np.maximum(1.0, np.abs(q_true))
             noise = noise_std * rng.standard_normal(q_true.shape)
             q = q_true + noise

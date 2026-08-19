@@ -95,6 +95,7 @@ class MonotoneGPFluxST:
 
     @staticmethod
     def _conductivity_from_flux(s, q):
+        # For q = -kappa s, least-squares projection gives scalar kappa.
         rho = np.sum(s * s, axis=1)
         if np.any(rho <= 1e-14):
             raise ValueError("Training/update states must have ||s|| > 0 to infer kappa.")
@@ -102,6 +103,7 @@ class MonotoneGPFluxST:
 
     @staticmethod
     def _invariant_features(s, T):
+        # Isotropy reduces the input from (s, T) to (||s||^2, T).
         return np.column_stack([
             np.sum(s * s, axis=1),
             T[:, 0],
@@ -218,6 +220,7 @@ class MonotoneGPFluxST:
             old_tau = tau.copy()
             old_eta = eta.copy()
             for i in range(m):
+                # Probit EP site for the constraint kappa_rho >= 0.
                 cavity_precision = 1.0 / variance[i] - old_tau[i]
                 if cavity_precision <= 1e-12:
                     continue
@@ -371,6 +374,7 @@ class MonotoneGPFluxST:
         self.y_train_ = self.y_train_[keep]
 
     def _append_function_block(self, X_new):
+        # Extend the joint derivative/function prior after cache updates.
         covariance_old_new = np.vstack([
             self._dK_dx(self.X_virtual_, X_new, 0),
             self._K(self.X_train_, X_new),
@@ -411,6 +415,7 @@ class MonotoneGPFluxST:
             keep = slice(-self.max_cache_size, None)
             s, T, q, kappa = s[keep], T[keep], q[keep], kappa[keep]
         X_raw = self._invariant_features(s, T)
+        # Scaling is learned once and reused for later posterior updates.
         self.x_mean_ = X_raw.mean(axis=0)
         self.x_scale_ = X_raw.std(axis=0)
         self.x_scale_[self.x_scale_ == 0.0] = 1.0
@@ -539,6 +544,7 @@ class MonotoneGPFluxST:
         kappa_std = value_cov @ self.alpha_
         kappa_rho_std = rho_cov @ self.alpha_
         kappa_T_std = T_cov @ self.alpha_
+        # Convert conductivity and its invariant derivatives back to physical units.
         kappa = self.kappa_mean_ + self.kappa_scale_ * kappa_std
         kappa_rho = (
             self.kappa_scale_ * kappa_rho_std / self.x_scale_[0]
@@ -549,6 +555,7 @@ class MonotoneGPFluxST:
         q = -kappa[:, None] * s
         identity = np.eye(self.s_dim_)
         outer = s[:, :, None] * s[:, None, :]
+        # Chain rule from kappa(rho,T), rho=||s||^2, back to q(s,T).
         dq_ds = (
             -kappa[:, None, None] * identity
             - 2.0 * kappa_rho[:, None, None] * outer
@@ -666,6 +673,7 @@ class MonotoneGPFluxST:
         evicted_old_points = np.empty((0, self.s_dim_ + 1))
         rejected_new_points = np.empty((0, self.s_dim_ + 1))
         if n_new >= capacity:
+            # If the new block overfills the cache, keep new points near the query.
             distances = np.linalg.norm(
                 (X_new - X_reference) / self.lengthscales_,
                 axis=1,
@@ -687,6 +695,7 @@ class MonotoneGPFluxST:
         else:
             overflow = max(0, old_size + n_new - capacity)
             if overflow:
+                # Otherwise evict old invariant states farthest from the query.
                 old_distances = np.linalg.norm(
                     (self.X_train_ - X_reference) / self.lengthscales_,
                     axis=1,

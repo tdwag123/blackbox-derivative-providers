@@ -185,8 +185,7 @@ class GPFluxST:
         if not np.all(np.isfinite(X)):
             raise ValueError("X must contain only finite values.")
         
-        # note: X.shape = (n_points, input_dim); omega.shape = (n_rff_features, input_dim); offset.shape = (n_rff_features,)
-        # so X@omega.T has shape (n_points, n_rff_features)
+        # X @ omega.T has shape (n_points, n_rff_features).
         A = np.cos(X@self.omega.T + self.offset) 
         scale = np.sqrt(2.0 * self.kernel_variance / self.n_rff_features)
         return scale * A
@@ -220,8 +219,10 @@ class GPFluxST:
     def _refresh_posterior(self):
         effective_noise = self.noise_variance + self.jitter
 
+        # Symmetrize before Cholesky to avoid tiny roundoff asymmetry.
         self.feature_gram = 0.5 * (self.feature_gram + self.feature_gram.T)
 
+        # Bayesian linear regression in random-feature space.
         self.training_system = (np.diag(self.feature_precision) + self.feature_gram / effective_noise)
         self.rhs = self.feature_target / effective_noise
 
@@ -239,7 +240,6 @@ class GPFluxST:
         self._refresh_posterior()
         self.cache_size = int(self.X_train.shape[0])
 
-    # hmmm
     def update_posterior(self, s_new, T_new, q_new):
         s_new, T_new, q_new = self._training_arrays(s_new, T_new, q_new)
 
@@ -257,6 +257,7 @@ class GPFluxST:
         X_combined_raw = np.vstack((self.X_cache_raw, X_raw_new))
         q_combined_raw = np.vstack((self.q_cache_raw, q_new))
 
+        # RFF uses FIFO cache eviction. The adaptive provider controls locality.
         overflow = max(0, X_combined_raw.shape[0] - self.max_cache_size)
 
         if overflow:
@@ -268,7 +269,7 @@ class GPFluxST:
 
         latent_raw = -self.q_cache_raw if self.learn_neg_flux else self.q_cache_raw
 
-        # Keep initial standardization fixed
+        # Keep initial standardization fixed so posterior updates are comparable.
         self.X_train = (self.X_cache_raw - self.x_mean) / self.x_scale
         self.y_train = (latent_raw - self.y_mean[None, :]) / self.y_scale[None, :]
 
@@ -299,7 +300,6 @@ class GPFluxST:
         if not (s_train.shape[0] == T_train.shape[0] == q_train.shape[0]):
             raise ValueError("Training arrays must have the same number of rows.")
 
-        # cache handling!!!
         n_train = q_train.shape[0]
 
         if self.max_cache_size == 0:
@@ -325,8 +325,7 @@ class GPFluxST:
         X_raw = self.X_cache_raw
         y_raw = -self.q_cache_raw if self.learn_neg_flux else self.q_cache_raw
 
-        # ---------------------------------- standardization ------------------------------------------------
-        # we standardize GP's inputs and target, making each variable roughly zero-mean and unit scale.
+        # Standardize inputs and targets before sampling random features.
         self.x_mean = X_raw.mean(axis=0) # returns array [mean_s, mean_T]
         self.x_scale = X_raw.std(axis=0) # returns array [std_s, std_T]
         self.x_scale[self.x_scale == 0.0] = 1.0 # if a particular element in x_scale is 0.0, change it to 1.0
@@ -337,7 +336,7 @@ class GPFluxST:
 
         self.X_train = (X_raw - self.x_mean) / self.x_scale
         self.y_train = (y_raw - self.y_mean[None, :]) / self.y_scale[None, :]
-        # ---------------------------------------------------------------------------------------------------
+        # Larger frequency norms get stronger prior shrinkage when alpha > 0.
         omega_norms = np.linalg.norm(self.omega, axis=1)
         self.feature_precision = (1.0 + self.alpha * omega_norms ** self.p)
 
@@ -383,7 +382,7 @@ class GPFluxST:
         sign = -1.0 if self.learn_neg_flux else 1.0
         mean = sign * latent_physical
 
-        # derivative means
+        # Derivatives are analytic derivatives of the random-feature map.
         n_points = X.shape[0]
         gradient_standardized = np.empty(
             (n_points, self.output_dim, self.input_dim),
@@ -404,13 +403,13 @@ class GPFluxST:
         if not return_variance:
             return mean, dq_ds, dq_dT
 
-        # flux variance
+        # Flux variance from the feature-space posterior covariance.
         solved = np.linalg.solve(self.posterior_cholesky, Phi.T)
         variance_standardized = np.sum(solved**2, axis=0)
 
         variance_q = (variance_standardized[:, None] * self.y_scale[None, :] ** 2)
 
-        # derivative variances
+        # Derivative variances use the same posterior covariance with dPhi/dx.
         derivative_variance_standardized = np.empty((n_points, self.input_dim),dtype=float)
 
         for dim in range(self.input_dim):

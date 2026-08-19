@@ -43,16 +43,19 @@ ORACLE_CONFIGS = {
 
 
 def physical_flux(s, T, k_0, alpha, beta):
+    """One-dimensional version of q(s, T) = -k(s, T) s."""
     return -(k_0 * (1.0 + alpha * T**2) + beta * s**2) * s
 
 
 def physical_flux_derivatives(s, T, k_0, alpha, beta):
+    """Exact derivatives used for diagnostics or analytic reference models."""
     q_s = -k_0 * (1.0 + alpha * T**2) - 3.0 * beta * s**2
     q_T = -2.0 * k_0 * alpha * T * s
     return q_s, q_T
 
 
 def make_diffusion_oracle(config="nonlinear_high_noise", seed=None, noisy=True):
+    """Create a scalar q-only oracle with optional multiplicative noise."""
     if config not in ORACLE_CONFIGS:
         raise ValueError(f"Unknown oracle config: {config}")
 
@@ -72,6 +75,7 @@ def make_diffusion_oracle(config="nonlinear_high_noise", seed=None, noisy=True):
         q_s, q_T = physical_flux_derivatives(s, T, k_0, alpha, beta)
 
         if noisy:
+            # Noise scales with flux magnitude but has a floor near zero flux.
             noise_std = sigma * np.maximum(1.0, np.abs(q_true))
             noise = noise_std * rng.standard_normal(np.shape(q_true))
             q = q_true + noise

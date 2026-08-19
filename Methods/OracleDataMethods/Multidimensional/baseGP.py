@@ -104,6 +104,7 @@ class GPFluxST:
         return jacobian.reshape(output_shape + (self.output_dim_, input_dimension))
 
     def _kernel_parts(self, X, Y):
+        # All kernel math is done in standardized input coordinates.
         X = np.asarray(X, dtype=float).reshape(-1, self.input_dim_)
         Y = np.asarray(Y, dtype=float).reshape(-1, self.input_dim_)
         delta = X[:, None, :] - Y[None, :, :]
@@ -135,6 +136,7 @@ class GPFluxST:
         return (X_raw - self.x_mean_) / self.x_scale_
     
     def _standardize_q(self, q_raw):
+        # Learning -q makes the heat-conductivity sign convention easier to fit.
         latent_raw = -q_raw if self.learn_neg_flux else q_raw
         return (latent_raw - self.y_mean_) / self.y_scale_    
 
@@ -153,6 +155,7 @@ class GPFluxST:
         self._refresh_posterior()
 
     def _append_block(self, X_new, y_new):
+        # Add observations by extending the Cholesky factor instead of refitting.
         n_old = self.X_train_.shape[0]
         n_new = X_new.shape[0]
         K_old_new = self._K(self.X_train_, X_new)
@@ -230,6 +233,8 @@ class GPFluxST:
                                              optimizer="fmin_l_bfgs_b" if self.optimize_hyperparameters else None,
                                              random_state=0)
         fitted_gp.fit(X, y)
+        # sklearn is used only to choose kernel/noise hyperparameters. The
+        # posterior below is rebuilt so derivative formulas stay explicit.
         fitted_signal = fitted_gp.kernel_.k1
         fitted_white = fitted_gp.kernel_.k2
         self.variance_ = float(fitted_signal.k1.constant_value)
@@ -243,7 +248,7 @@ class GPFluxST:
         if (self.reg_function > 0.0 and self.reg_function >= self.learned_noise_variance_):
             self.reg_function = min(0.9*self.learned_noise_variance_, self.reg_function*self.learned_noise_variance_)
         self.effective_diagonal_variance_ = (self.learned_noise_variance_ + self.reg_function + self.jitter)
-        # cache rows may be in any order; point eviction is based on query distance
+        # Cache rows may be in any order; point eviction is based on query distance.
         self.X_cache_raw_ = X_raw.copy()
         self.q_cache_raw_ = q.copy()
         self.X_train_ = X.copy()
@@ -258,6 +263,7 @@ class GPFluxST:
         latent_standardized = K_query_train @ self.alpha_
         gradient_standardized = np.empty((X.shape[0], self.output_dim_, self.input_dim_), dtype=float)
         for dim in range(self.input_dim_):
+            # Differentiate the kernel with respect to query coordinates.
             gradient_standardized[:, :, dim] = self._dK_dx(X, self.X_train_, dim) @ self.alpha_
         latent_physical = self.y_mean_[None, :] + self.y_scale_[None, :] * latent_standardized
         gradient_physical = (self.y_scale_[None, :, None] * gradient_standardized / self.x_scale_[None, None, :])
@@ -329,6 +335,7 @@ class GPFluxST:
             added = capacity
             dropped = old_size
         else:
+            # Keep the old points closest to the current query, then append new data.
             old_slots = capacity - n_new
             old_distances = np.linalg.norm((self.X_train_ - X_reference) / self.lengthscales_, axis=1)
             keep_old = np.argsort(old_distances)[:old_slots]

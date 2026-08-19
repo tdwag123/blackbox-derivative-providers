@@ -46,6 +46,7 @@ def node_point(idx, grid_vars):
 
 
 def global_id(idx, grid_vars):                # idx = (i,j) or (i,j,k)
+    # Row-major flattening must match the order used by all_node_indices.
     flat = 0
     for d in range(grid_vars["dim"]):
         flat = flat * grid_vars["n_nodes_per_axis"][d] + idx[d]
@@ -194,12 +195,14 @@ def apply_neumann_boundaries(R_global, neumann_boundaries, grid_vars):
         R_global[global_id(idx, grid_vars)] += qn
 
     def add_edge(a, b, length, qn):
+        # Linear boundary elements split a constant/pointwise flux evenly.
         midpoint = 0.5 * (node_point(a, grid_vars) + node_point(b, grid_vars))
         flux = boundary_value(qn, midpoint)
         R_global[global_id(a, grid_vars)] += 0.5 * length * flux
         R_global[global_id(b, grid_vars)] += 0.5 * length * flux
 
     def add_face(nodes, area, qn):
+        # Tensor-product bilinear face with midpoint quadrature.
         midpoint = sum(node_point(node, grid_vars) for node in nodes) / 4.0
         flux = boundary_value(qn, midpoint)
         for node in nodes:
@@ -323,6 +326,7 @@ def element_residual_tangent(a, b, T_elem, flux_law, source_fn, dsource_dT, grid
     quad_T = quad_N @ T_elem
     quad_gradT = np.einsum("qed,e->qd", quad_G, T_elem)
     try:
+        # Providers are batch-capable; the fallback keeps scalar flux laws usable.
         quad_q, quad_A, quad_b = flux_law(quad_gradT, quad_T, quad_pts)
     except (TypeError, ValueError):
         q_values = []
@@ -357,6 +361,7 @@ def element_residual_tangent(a, b, T_elem, flux_law, source_fn, dsource_dT, grid
             drdt_g = float(dsource_dT(T_g, pt))
             for i in range(grid_vars["nen"]):
                 for j in range(grid_vars["nen"]):
+                    # Chain rule for q(grad T, T) with respect to nodal T_j.
                     flux_term = -np.dot(G[i], dq_dgrad @ G[j] + dq_dT * N[j])
                     src_term = -drdt_g * N[i] * N[j]
                     K_elem[i, j] += factor * float(flux_term + src_term)
@@ -515,6 +520,8 @@ def NM(boundary_points, flux_law, source_fn, dsource_dT, boundary_conditions, to
         if line_search: 
             step_accepted = False
             while alpha > 1.0e-12:
+                # Backtracking is mainly here for learned flux laws, where the
+                # tangent may be noisy or only locally accurate.
                 T_trial = T_nodal.copy()
                 T_trial[free_dofs] += alpha * dT_free 
                 for idx, val in dirichlet_nodes.items(): T_trial[global_id(idx, grid_vars)] = val
