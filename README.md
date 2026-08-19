@@ -31,10 +31,10 @@ We want our RIPS sponsors to be aware of the nature of software developed by RIP
 - `Methods/isotropicMonotoneGP.py`  
   Isotropic monotone GP version retained from the most recent isotropic results.
 
-- `Testing/BlackBoxTesting3D/bb3d_providers.py`  
+- `Testing/bb3d_providers.py`  
   Local adaptive black-box providers for `baseGP`, `monotoneGP`, and `rff_baseGP`.
 
-- `Testing/BlackBoxTesting3D/bb3d_comparison.py`  
+- `Testing/bb3d_comparison.py`  
   Runs the provider methods inside `Basic.newton_nd.NM` and writes CSV results.
 
 ## Methods
@@ -51,7 +51,7 @@ The provider is local: it samples the black-box oracle near the states visited b
 ## Example
 
 ```python
-from Testing.BlackBoxTesting3D.bb3d_comparison import comparison
+from Testing.bb3d_comparison import comparison
 
 comparison(
     "documentedcode_example",

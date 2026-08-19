@@ -51,7 +51,7 @@ import numpy as np
 
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
 from Data.bboracle3dDiffusion import (  # noqa: E402

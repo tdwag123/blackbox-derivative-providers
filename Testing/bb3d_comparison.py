@@ -32,13 +32,13 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 sys.path.append(str(ROOT / "Basic"))
 
 from Basic.newton_nd import NM  # noqa: E402
 from Data.bboracle3dDiffusion import ORACLE_CONFIGS  # noqa: E402
-from Testing.BlackBoxTesting3D.bb3d_providers import build_provider  # noqa: E402
+from Testing.bb3d_providers import build_provider  # noqa: E402
 
 
 PHYSICS_TOL = 1.0e-10
