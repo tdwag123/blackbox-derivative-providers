@@ -54,7 +54,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
 
-from Data.BlackBoxOracle.bboracle3dDiffusion import (  # noqa: E402
+from Data.bboracle3dDiffusion import (  # noqa: E402
     ORACLE_CONFIGS,
     make_diffusion_oracle,
     physical_flux,
@@ -62,19 +62,19 @@ from Data.BlackBoxOracle.bboracle3dDiffusion import (  # noqa: E402
 )
 
 try:
-    from Methods.OracleDataMethods.Multidimensional.baseGP import GPFluxST as BaseGPFluxST
+    from Methods.baseGP import GPFluxST as BaseGPFluxST
 except (ImportError, OSError):
     BaseGPFluxST = None
 
 try:
-    from Methods.OracleDataMethods.Multidimensional.monotoneGP import (
+    from Methods.directionalMonotoneGP import (
         MonotoneGPFluxST,
     )
 except (ImportError, OSError):
     MonotoneGPFluxST = None
 
 try:
-    from Methods.OracleDataMethods.Multidimensional.rff_baseGP import (
+    from Methods.rff_baseGP import (
         GPFluxST as RFFBaseGPFluxST,
     )
 except (ImportError, OSError):
@@ -280,7 +280,7 @@ class OracleVectorCache:
 
 
 class BaseGPVectorProvider:
-    """Adapter for Methods.OracleDataMethods.Multidimensional.baseGP.GPFluxST."""
+    """Adapter for Methods.baseGP.GPFluxST."""
 
     def __init__(
         self,
@@ -301,7 +301,7 @@ class BaseGPVectorProvider:
     ) -> None:
         if BaseGPFluxST is None:
             raise ImportError(
-                "bb3d_basegp requires Methods.OracleDataMethods.Multidimensional.baseGP"
+                "bb3d_basegp requires Methods.baseGP"
             )
         self.dim = int(dim)
         X = np.asarray(X, dtype=float)
@@ -367,7 +367,7 @@ class BaseGPVectorProvider:
 
 
 class RFFBaseGPVectorProvider(BaseGPVectorProvider):
-    """Adapter for Methods.OracleDataMethods.Multidimensional.rff_baseGP.GPFluxST."""
+    """Adapter for Methods.rff_baseGP.GPFluxST."""
 
     def __init__(
         self,
@@ -388,7 +388,7 @@ class RFFBaseGPVectorProvider(BaseGPVectorProvider):
     ) -> None:
         if RFFBaseGPFluxST is None:
             raise ImportError(
-                "bb3d_rff_basegp requires Methods.OracleDataMethods.Multidimensional.rff_baseGP"
+                "bb3d_rff_basegp requires Methods.rff_baseGP"
             )
         self.dim = int(dim)
         X = np.asarray(X, dtype=float)
@@ -411,7 +411,7 @@ class RFFBaseGPVectorProvider(BaseGPVectorProvider):
 
 
 class MonotoneGPVectorProvider:
-    """Adapter for Methods.OracleDataMethods.Multidimensional.monotoneGP."""
+    """Adapter for Methods.directionalMonotoneGP."""
 
     def __init__(
         self,
@@ -440,7 +440,7 @@ class MonotoneGPVectorProvider:
     ) -> None:
         if MonotoneGPFluxST is None:
             raise ImportError(
-                "bb3d_monotonegp requires Methods.OracleDataMethods.Multidimensional.monotoneGP"
+                "bb3d_monotonegp requires Methods.directionalMonotoneGP"
             )
         self.dim = int(dim)
         X = np.asarray(X, dtype=float)

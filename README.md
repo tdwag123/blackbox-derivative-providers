@@ -16,22 +16,19 @@ We want our RIPS sponsors to be aware of the nature of software developed by RIP
 - `Basic/newton_nd.py`  
   Rectangular-grid Newton/FEM solve for 1D, 2D, and 3D problems.
 
-- `Data/BlackBoxOracle/bboracle3dDiffusion.py`  
+- `Data/bboracle3dDiffusion.py`  
   Two- and three-dimensional nonlinear diffusion oracle. The black-box interface returns only flux values.
 
-- `Data/BlackBoxOracle/blackboxoracle.py`  
-  Scalar black-box oracle interface used by supporting oracle experiments.
-
-- `Methods/OracleDataMethods/Multidimensional/baseGP.py`  
+- `Methods/baseGP.py`  
   Multidimensional Matern GP flux surrogate.
 
-- `Methods/OracleDataMethods/Multidimensional/monotoneGP.py`  
+- `Methods/directionalMonotoneGP.py`  
   Multidimensional monotone GP flux surrogate.
 
-- `Methods/OracleDataMethods/Multidimensional/rff_baseGP.py`  
+- `Methods/rff_baseGP.py`  
   Random Fourier feature version of the multidimensional base GP.
 
-- `Methods/OracleDataMethods/nDIsotropic/monotoneGP.py`  
+- `Methods/isotropicMonotoneGP.py`  
   Isotropic monotone GP version retained from the most recent isotropic results.
 
 - `Testing/BlackBoxTesting3D/bb3d_providers.py`  
