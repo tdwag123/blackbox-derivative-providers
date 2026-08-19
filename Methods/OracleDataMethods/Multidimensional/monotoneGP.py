@@ -45,7 +45,14 @@ from scipy.special import log_ndtr
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
-class MonotoneGPFluxST: 
+
+class MonotoneGPError(RuntimeError):
+    """Raised when monotone EP constraints cannot be fit reliably."""
+
+
+class MonotoneGPFluxST:
+    """Matern GP surrogate with EP-based monotonicity constraints."""
+
     def __init__(
         self,
         s_train,
@@ -69,6 +76,12 @@ class MonotoneGPFluxST:
         lengthscale=4.0,
         noise_variance=1.0e-2,
         optimize_hyperparameters=True,
+        adaptive_virtual_refinement=True,
+        monotonicity_check_points_per_axis=5,
+        max_virtual_refinements=1,
+        max_virtual_points_per_round=12,
+        monotonicity_tolerance=1.0e-8,
+        ep_min_damping=None,
         max_cache_size=None,
     ):
         self.learn_neg_flux = bool(learn_neg_flux)
@@ -87,10 +100,25 @@ class MonotoneGPFluxST:
         self.lengthscale = lengthscale
         self.noise_variance = float(noise_variance)
         self.optimize_hyperparameters = bool(optimize_hyperparameters)
+        self.adaptive_virtual_refinement = bool(adaptive_virtual_refinement)
+        self.monotonicity_check_points_per_axis = int(monotonicity_check_points_per_axis)
+        self.max_virtual_refinements = int(max_virtual_refinements)
+        self.max_virtual_points_per_round = int(max_virtual_points_per_round)
+        self.monotonicity_tolerance = float(monotonicity_tolerance)
+        self.ep_min_damping = (
+            max(float(ep_min_damping), 1.0e-4)
+            if ep_min_damping is not None
+            else max(self.ep_damping / 8.0, 1.0e-4)
+        )
         self.max_cache_size = (None if max_cache_size is None else int(max_cache_size))
         self.posterior_updates_ = 0
         self.total_points_added_ = 0
         self.total_points_dropped_ = 0
+        self.virtual_refinement_rounds_ = 0
+        self.virtual_points_added_ = 0
+        self.constraint_violation_fraction_ = np.nan
+        self.constraint_worst_violation_ = np.nan
+        self.ep_damping_used_ = []
         self.fit(s_train, T_train, q_train, noise_std=noise_std)
 
     @staticmethod
@@ -188,7 +216,14 @@ class MonotoneGPFluxST:
             return mean, variance, alpha, C
         return mean, variance, alpha
 
-    def _run_ep_output(self, output_index, derivative_tau=None, derivative_eta=None, max_iterations=None):
+    def _run_ep_output(
+        self,
+        output_index,
+        derivative_tau=None,
+        derivative_eta=None,
+        max_iterations=None,
+        damping=None,
+    ):
         m = self.X_virtual_.shape[0]
         n = self.X_train_.shape[0]
         tau = np.zeros(m + n)
@@ -201,34 +236,51 @@ class MonotoneGPFluxST:
         eta[m:] = (self.y_train_[:, output_index]/self.ep_observation_noise_variance_)
         iterations = self.ep_max_iter if max_iterations is None else int(max_iterations)
         L = self.ep_prior_cholesky_[output_index]
+        ep_damping = self.ep_damping if damping is None else float(damping)
+        if not 0.0 < ep_damping <= 1.0:
+            raise ValueError("EP damping must be in (0, 1].")
+        largest_change = np.inf
         for iteration in range(iterations):
             mean, variance, _ = self._posterior(L, tau, eta)
+            if not np.all(np.isfinite(mean)) or not np.all(np.isfinite(variance)):
+                raise MonotoneGPError("EP posterior produced nonfinite moments")
             old_tau = tau.copy()
             old_eta = eta.copy()
             for i in range(m):
                 cavity_precision = (1.0/variance[i] - old_tau[i])
-                if cavity_precision <= 1e-12: 
-                    continue
+                if not np.isfinite(cavity_precision) or cavity_precision <= 1e-12:
+                    raise MonotoneGPError("EP cavity precision is nonpositive")
                 cavity_variance = 1.0/cavity_precision
                 cavity_mean = (mean[i] / variance[i] - old_eta[i]) * cavity_variance
                 scale = np.sqrt(cavity_variance + self.probit_nu**2)
                 z = cavity_mean/scale
                 mills = np.exp(-0.5 * z**2 - 0.5 * np.log(2.0 * np.pi) - log_ndtr(z))
+                if not np.isfinite(mills):
+                    raise MonotoneGPError("EP inverse Mills ratio is nonfinite")
                 tilted_mean = cavity_mean + cavity_variance * mills / scale
                 tilted_variance = cavity_variance * (1.0 - cavity_variance * mills * (mills + z) / (cavity_variance + self.probit_nu**2))
-                tilted_variance = max(tilted_variance, 1e-12)
+                if not np.isfinite(tilted_variance) or tilted_variance <= 1e-14:
+                    raise MonotoneGPError("EP tilted variance collapsed")
                 proposed_tau = 1.0/tilted_variance - cavity_precision
+                negative_tolerance = 1e-10 * max(1.0, cavity_precision)
+                if proposed_tau < -negative_tolerance:
+                    raise MonotoneGPError("EP produced a negative site precision")
                 if proposed_tau < 0.0:
                     proposed_tau = 0.0
                     proposed_eta = 0.0
                 else:
                     proposed_eta = (tilted_mean / tilted_variance) - (cavity_mean / cavity_variance)
-                tau[i] = (1.0 - self.ep_damping) * old_tau[i] + self.ep_damping * proposed_tau
-                eta[i] = (1.0 - self.ep_damping) * old_eta[i] + self.ep_damping * proposed_eta
+                if not np.isfinite(proposed_tau) or not np.isfinite(proposed_eta):
+                    raise MonotoneGPError("EP produced nonfinite site parameters")
+                tau[i] = (1.0 - ep_damping) * old_tau[i] + ep_damping * proposed_tau
+                eta[i] = (1.0 - ep_damping) * old_eta[i] + ep_damping * proposed_eta
             tau_change = np.max(np.abs(tau[:m] - old_tau[:m]) / (1.0 + np.abs(old_tau[:m])))
             eta_change = np.max(np.abs(eta[:m] - old_eta[:m]) / (1.0 + np.abs(old_eta[:m])))
-            if max(tau_change, eta_change) < self.ep_tol:
+            largest_change = max(tau_change, eta_change)
+            if largest_change < self.ep_tol:
                 break
+        if not np.isfinite(largest_change):
+            raise MonotoneGPError("EP did not produce a finite convergence signal")
         mean, variance, alpha, C = self._posterior(L, tau, eta, return_cholesky=True)
         self.ep_iterations_[output_index] = iteration + 1
         self.ep_site_precision_[output_index] = tau
@@ -240,7 +292,7 @@ class MonotoneGPFluxST:
         self.ep_whitened_precision_cholesky_[output_index] = C
         self.alpha_[:, output_index] = alpha
 
-    def _run_ep(self, derivative_tau=None, derivative_eta=None, max_iterations=None):
+    def _run_ep_once(self, derivative_tau=None, derivative_eta=None, max_iterations=None, damping=None):
         m = self.X_virtual_.shape[0]
         n = self.X_train_.shape[0]
         joint_size = m + n
@@ -256,13 +308,161 @@ class MonotoneGPFluxST:
         for output_index in range(self.output_dim_):
             tau_r = None if derivative_tau is None else derivative_tau[output_index]
             eta_r = None if derivative_eta is None else derivative_eta[output_index]
-            self._run_ep_output(output_index, derivative_tau=tau_r, derivative_eta=eta_r, max_iterations=max_iterations)
+            self._run_ep_output(
+                output_index,
+                derivative_tau=tau_r,
+                derivative_eta=eta_r,
+                max_iterations=max_iterations,
+                damping=damping,
+            )
         self.alpha_norm_ = float(np.linalg.norm(self.alpha_))
         self.cache_size_ = int(n)
+
+    def _run_ep(self, derivative_tau=None, derivative_eta=None, max_iterations=None):
+        damping = float(self.ep_damping)
+        failures = []
+        while True:
+            try:
+                self._run_ep_once(
+                    derivative_tau=derivative_tau,
+                    derivative_eta=derivative_eta,
+                    max_iterations=max_iterations,
+                    damping=damping,
+                )
+                self.ep_damping_used_ = [damping] * self.output_dim_
+                return
+            except (MonotoneGPError, np.linalg.LinAlgError) as error:
+                failures.append(str(error))
+                damping *= 0.5
+                if damping < self.ep_min_damping:
+                    raise MonotoneGPError(
+                        "EP failed after adaptive damping retries: "
+                        + " | ".join(failures)
+                    ) from error
     
     def _make_initial_virtual_grid(self, X):
         axes = [np.linspace(X[:, dim].min(), X[:, dim].max(), self.n_virtual_per_axis) for dim in range(self.input_dim_)]
         return np.asarray(list(itertools.product(*axes)), dtype=float)
+
+    def _make_constraint_check_grid(self, X):
+        axes = [
+            np.linspace(
+                X[:, dim].min(),
+                X[:, dim].max(),
+                self.monotonicity_check_points_per_axis,
+            )
+            for dim in range(self.input_dim_)
+        ]
+        return np.asarray(list(itertools.product(*axes)), dtype=float)
+
+    @staticmethod
+    def _select_new_virtual_points(existing, candidates, severity, max_points, min_distance):
+        if candidates.size == 0 or max_points <= 0:
+            return np.empty((0, existing.shape[1]), dtype=float)
+        order = np.argsort(-np.asarray(severity, dtype=float).reshape(-1))
+        selected = []
+        for index in order:
+            point = np.asarray(candidates[index], dtype=float)
+            if existing.size:
+                existing_distance = np.min(np.linalg.norm(existing - point, axis=1))
+                if existing_distance < min_distance:
+                    continue
+            if selected:
+                selected_distance = np.min(np.linalg.norm(np.vstack(selected) - point, axis=1))
+                if selected_distance < min_distance:
+                    continue
+            selected.append(point)
+            if len(selected) >= max_points:
+                break
+        if not selected:
+            return np.empty((0, existing.shape[1]), dtype=float)
+        return np.vstack(selected)
+
+    def _predict_standardized_state(self, X, X_virtual=None, alpha=None):
+        X = np.atleast_2d(np.asarray(X, dtype=float))
+        X_virtual = self.X_virtual_ if X_virtual is None else np.asarray(X_virtual, dtype=float)
+        alpha = self.alpha_ if alpha is None else np.asarray(alpha, dtype=float)
+        latent = np.empty((X.shape[0], self.output_dim_), dtype=float)
+        gradient = np.empty((X.shape[0], self.output_dim_, self.input_dim_), dtype=float)
+        for output_index in range(self.output_dim_):
+            monotone_dim = int(self.monotone_input_dims_[output_index])
+            value_covariance = np.hstack([
+                self._dK_dy(X, X_virtual, monotone_dim),
+                self._K(X, self.X_train_),
+            ])
+            latent[:, output_index] = value_covariance @ alpha[:, output_index]
+            for dim in range(self.input_dim_):
+                derivative_covariance = np.hstack([
+                    self._d2K_dxdy(X, X_virtual, dim, monotone_dim),
+                    self._dK_dx(X, self.X_train_, dim),
+                ])
+                gradient[:, output_index, dim] = (
+                    derivative_covariance @ alpha[:, output_index]
+                )
+        return latent, gradient
+
+    def _scan_monotonicity_constraints(self):
+        if self.monotonicity_check_points_per_axis < 2:
+            return {
+                "candidates": np.empty((0, self.input_dim_), dtype=float),
+                "violations": np.zeros(0, dtype=bool),
+                "severity": np.zeros(0, dtype=float),
+                "fraction": 0.0,
+                "worst": 0.0,
+            }
+        candidates = self._make_constraint_check_grid(self.X_train_)
+        _, gradient = self._predict_standardized_state(candidates)
+        constrained = np.empty((candidates.shape[0], self.output_dim_), dtype=float)
+        for output_index in range(self.output_dim_):
+            constrained[:, output_index] = gradient[
+                :, output_index, int(self.monotone_input_dims_[output_index])
+            ]
+        scale = np.maximum(np.max(np.abs(constrained), axis=0), 1.0)
+        tolerance = self.monotonicity_tolerance * scale
+        violation_matrix = constrained < -tolerance[None, :]
+        violations = np.any(violation_matrix, axis=1)
+        severity = np.max(np.maximum(-constrained - tolerance[None, :], 0.0), axis=1)
+        worst = float(np.max(np.maximum(-constrained, 0.0))) if constrained.size else 0.0
+        return {
+            "candidates": candidates,
+            "violations": violations,
+            "severity": severity,
+            "fraction": float(np.mean(violations)) if violations.size else 0.0,
+            "worst": worst,
+        }
+
+    def _fit_with_adaptive_virtual_refinement(self):
+        self.X_virtual_ = self._make_initial_virtual_grid(self.X_train_)
+        last_scan = {
+            "fraction": np.nan,
+            "worst": np.nan,
+            "violations": np.zeros(0, dtype=bool),
+            "candidates": np.empty((0, self.input_dim_), dtype=float),
+            "severity": np.zeros(0, dtype=float),
+        }
+        rounds = self.max_virtual_refinements if self.adaptive_virtual_refinement else 0
+        for refinement_round in range(rounds + 1):
+            self._build_initial_joint_prior()
+            self._run_ep(max_iterations=self.ep_max_iter)
+            last_scan = self._scan_monotonicity_constraints()
+            self.virtual_refinement_rounds_ = refinement_round
+            self.constraint_violation_fraction_ = float(last_scan["fraction"])
+            self.constraint_worst_violation_ = float(last_scan["worst"])
+            if last_scan["fraction"] <= 0.0 or refinement_round == rounds:
+                break
+            min_distance = 0.5 / max(self.monotonicity_check_points_per_axis - 1, 1)
+            new_points = self._select_new_virtual_points(
+                self.X_virtual_,
+                last_scan["candidates"][last_scan["violations"]],
+                last_scan["severity"][last_scan["violations"]],
+                self.max_virtual_points_per_round,
+                min_distance,
+            )
+            if new_points.shape[0] == 0:
+                break
+            self.X_virtual_ = np.vstack([self.X_virtual_, new_points])
+            self.virtual_points_added_ += int(new_points.shape[0])
+        return last_scan
     
     def _build_joint_prior_for_output(self, output_index):
         monotone_dim = int(self.monotone_input_dims_[output_index])
@@ -400,9 +600,11 @@ class MonotoneGPFluxST:
         self.q_cache_raw_ = q.copy()
         self.X_train_ = X.copy()
         self.y_train_ = y.copy()
-        self.X_virtual_ = self._make_initial_virtual_grid(self.X_train_)
-        self._build_initial_joint_prior()
-        self._run_ep(max_iterations=self.ep_max_iter)
+        self.virtual_refinement_rounds_ = 0
+        self.virtual_points_added_ = 0
+        self.constraint_violation_fraction_ = np.nan
+        self.constraint_worst_violation_ = np.nan
+        self._fit_with_adaptive_virtual_refinement()
         return self
         
     def evaluate(self, s_q, T_q, return_variance=False):

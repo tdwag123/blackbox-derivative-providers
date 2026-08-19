@@ -1,16 +1,45 @@
+"""Newton/FEM solve on rectangular tensor-product grids.
+
+The main entry point is ``NM``. It expects a flux law with interface
+``flux_law(grad_T, T, point) -> (q, dq_dgrad_T, dq_dT)`` and supports 1D, 2D,
+and 3D side-based boundary conditions.
+"""
+
 import itertools
 import numpy as np
 from scipy.interpolate import griddata
 from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import spsolve
-from FEM_Structure.fem import get_gl2_values
-
-'''
-ND (1,2,3) FEM solve with rectangular Neumann/Dirichlet boundaries.
-'''
 
 # =================================================================================
 # shape functions & helpers
+
+def get_gl2_values(dim: int):
+    """
+    Return tensor-product 2-point Gauss-Legendre quadrature nodes and weights.
+    """
+    if dim < 1:
+        raise ValueError("dim must be positive")
+
+    x_1d, w_1d = np.polynomial.legendre.leggauss(2)
+    x_1d = x_1d.reshape(-1, 1)
+    quad_pts = x_1d
+    weights = w_1d
+
+    if dim == 1:
+        return quad_pts, weights
+
+    two_ones = np.ones((2, 1))
+    for k in range(2, dim + 1):
+        old_quad_pts = quad_pts
+        old_weights = weights
+        k_ones = np.ones((2 ** (k - 1), 1))
+        quad_pts = np.hstack(
+            (np.kron(x_1d, k_ones), np.kron(two_ones, old_quad_pts))
+        )
+        weights = np.kron(old_weights, w_1d)
+
+    return quad_pts, weights
 
 def node_point(idx, grid_vars):
     return np.array([grid_vars['coords'][d][idx[d]] for d in range(grid_vars['dim'])])
@@ -444,21 +473,18 @@ def initial_guess(dirichlet_nodes, grid_vars): # NOTE: make this more flexible
     
 
 def NM(boundary_points, flux_law, source_fn, dsource_dT, boundary_conditions, tol=1e-10, maxiter=30, verbose=False, line_search=True, return_grid=False):
-    '''
-    Newton linearization.
+    """Solve the nonlinear FEM system by Newton iteration.
 
-    Expected parameters:
-        boundary_points = [[x_coords], [y_coords], [(z_coords)]]
-        flux_law(g, T, x) -> (q, dq_dg, dq_dT)
-        source_fn(T, x) -> r
-        dsource_dT(T, x) -> dr_dT
-        boundary_conditions : dict {idx_tuple) -> ('dirichlet'/'neumann', prescribed_value})
+    Expected inputs:
+        boundary_points: coordinate arrays, one per dimension
+        flux_law(g, T, x): returns q, dq/dg, and dq/dT
+        source_fn(T, x): source term
+        dsource_dT(T, x): source derivative
+        boundary_conditions: side map such as {"xmin": ("dirichlet", value)}
 
     Returns:
-        T_nodal : nodal temperature array
-        residual_norm_history : residual norm at each Newton check
-        num_iters : num Newton updates before converge
-    '''
+        T_nodal, residual_norm_history, num_iters
+    """
 
     grid_vars = grid(boundary_points)
     dirichlet_nodes, neumann_boundaries = split_boundary_conditions(boundary_conditions, grid_vars)

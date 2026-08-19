@@ -1,28 +1,29 @@
-"""Adaptive local black-box providers for 2D/3D diffusion flux oracles.
+"""Local black-box providers for 2D/3D diffusion flux oracles.
 
 The physical oracle is conceptually only
 
     (grad_T, T) -> q.
 
-These providers sample that oracle, fit a local vector-valued surrogate, and
-return the fitted flux and fitted derivatives needed by Newton/FEM code:
+This file wraps that q-only oracle in a Newton/FEM-ready flux law. Each provider
+keeps a small local cache of oracle samples near the states visited by Newton,
+fits one of the GP models kept in this branch, and returns
 
     q, dq/dgrad_T, dq/dT.
 
-The derivatives here are derivatives of the local fitted model, not extra
-training labels from the oracle.
+Those derivatives come from the fitted surrogate. They are not supplied by the
+black-box oracle as training labels.
 
 How to read this file
 ---------------------
 The provider has four layers:
 
-1. ``OracleVectorCache`` calls the expensive/black-box oracle and remembers
-   samples. A sample point is the physical state ``[grad_T..., T]``.
-2. ``PolynomialVectorProvider``, ``RBFVectorProvider``, and
-   ``BaseGPVectorProvider`` are local surrogate models. They fit only flux
-   values ``q`` and then differentiate the fitted model.
-3. ``AdaptiveLocalFluxProvider`` decides where to sample near a Newton/FEM
-   query point, when to refit, and when to add more nearby points.
+1. ``OracleVectorCache`` calls the black-box oracle and remembers samples. A
+   sample point is the physical constitutive state ``[grad_T..., T]``.
+2. ``BaseGPVectorProvider``, ``MonotoneGPVectorProvider``, and
+   ``RFFBaseGPVectorProvider`` are local GP surrogate models. They fit only
+   flux values ``q`` and then differentiate the fitted model.
+3. ``AdaptiveLocalFluxProvider`` chooses nearby sample points, fits/refits the
+   selected GP, and reports diagnostics used by the comparison script.
 4. ``build_provider`` is the public factory used by comparison scripts.
 
 For 3D diffusion, the state and output are
@@ -44,7 +45,6 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
-from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -74,25 +74,11 @@ except (ImportError, OSError):
     MonotoneGPFluxST = None
 
 try:
-    from Methods.OracleDataMethods.Multidimensional.derivGP.buildFDField import (
-        build_finite_difference_field as build_md_finite_difference_field,
-    )
-    from Methods.OracleDataMethods.Multidimensional.derivGP.derivativeGP import (
-        DerivativeGPFluxST,
+    from Methods.OracleDataMethods.Multidimensional.rff_baseGP import (
+        GPFluxST as RFFBaseGPFluxST,
     )
 except (ImportError, OSError):
-    build_md_finite_difference_field = None
-    DerivativeGPFluxST = None
-
-
-def _multiindices(n_features: int, degree: int) -> list[tuple[int, ...]]:
-    """List polynomial powers up to a total degree."""
-    powers: list[tuple[int, ...]] = []
-    for total in range(degree + 1):
-        for exponent in product(range(total + 1), repeat=n_features):
-            if sum(exponent) == total:
-                powers.append(tuple(int(v) for v in exponent))
-    return powers
+    RFFBaseGPFluxST = None
 
 
 @dataclass
@@ -112,7 +98,6 @@ class AdaptiveBB3DOptions:
     # comparable size. This is a radius in (grad_T, T) state space, not a
     # physical mesh radius in x/y/z space.
     sample_radius: float = 0.75
-    validation_radius_factor: float = 1.5
 
     # Point counts scale with state_dim = dim + 1 because the state is
     # [gradient components..., temperature]. In 3D, state_dim = 4, so the
@@ -129,7 +114,6 @@ class AdaptiveBB3DOptions:
     use_posterior_updates: bool = False
     oracle_key_decimals: int = 12
     active_prune_policy: str = "fifo"
-    mse_tolerance: float = 5.0e-2
     variance_tolerance: float = 5.0e-2
     # Kept as an option for experiments, but the default is zero because FEM
     # mesh spacing has different units than the scaled constitutive state.
@@ -150,13 +134,9 @@ class AdaptiveBB3DOptions:
         min_radius = self.min_mesh_radius_factor * self.mesh_spacing
         return max(float(self.sample_radius), float(min_radius))
 
-    @property
-    def validation_radius(self) -> float:
-        return self.validation_radius_factor * self.effective_sample_radius
-
 
 def parse_method_spec(method: str) -> tuple[str, dict]:
-    """Parse compact specs like ``bb3d_poly+degree=3+sample_radius=0.5``."""
+    """Parse compact specs like ``bb3d_basegp+sample_radius=0.5``."""
     text = str(method)
     if "+" not in text:
         return text.lower(), {}
@@ -179,12 +159,8 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
         try:
             if key in {
                 "sample_radius",
-                "validation_radius_factor",
-                "mse_tolerance",
                 "variance_tolerance",
                 "mesh_spacing",
-                "ridge_strength",
-                "gamma",
                 "noise_std",
                 "jitter",
                 "reg_function",
@@ -195,17 +171,11 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
                 "probit_nu",
                 "ep_damping",
                 "ep_tol",
-                "fd_s_radius",
-                "fd_t_radius",
-                "fd_h_s",
-                "fd_h_t",
-                "fd_noise_variance_floor",
-                "kernel_nu",
-                "k_ref",
+                "alpha",
+                "p",
             }:
                 options[key] = float(value)
             elif key in {
-                "degree",
                 "initial_points_per_dim",
                 "max_points_per_dim",
                 "refill_points",
@@ -215,11 +185,8 @@ def parse_method_spec(method: str) -> tuple[str, dict]:
                 "ep_max_iter",
                 "online_ep_sweeps",
                 "rng_seed",
-                "fd_n_s",
-                "fd_n_t",
-                "fd_repeats",
-                "derivgp_max_centers",
                 "n_restarts_optimizer",
+                "n_rff_features",
             }:
                 options[key] = int(value)
             elif key in {
@@ -306,85 +273,6 @@ class OracleVectorCache:
         }
 
 
-class PolynomialVectorProvider:
-    """Local polynomial least-squares fit for vector flux with analytic derivatives."""
-
-    def __init__(self, X: np.ndarray, Y: np.ndarray, degree: int = 2, ridge_strength: float = 0.0):
-        self.X = np.asarray(X, dtype=float)
-        self.Y = np.asarray(Y, dtype=float)
-        self.n_features = self.X.shape[1]
-        self.degree = int(degree)
-        self.ridge_strength = float(ridge_strength)
-        self.powers = _multiindices(self.n_features, self.degree)
-
-        design = self._design(self.X)
-
-        # One design matrix fits every flux component at once:
-        # design @ coef_ approximates [qx, qy, qz].
-        if self.ridge_strength > 0.0:
-            lhs = design.T @ design + self.ridge_strength * np.eye(design.shape[1])
-            rhs = design.T @ self.Y
-            self.coef_ = np.linalg.solve(lhs, rhs)
-        else:
-            self.coef_, *_ = np.linalg.lstsq(design, self.Y, rcond=None)
-
-    def _design(self, X: np.ndarray) -> np.ndarray:
-        X = np.atleast_2d(np.asarray(X, dtype=float))
-        columns = []
-        for power in self.powers:
-            value = np.ones(X.shape[0], dtype=float)
-            for axis, exponent in enumerate(power):
-                if exponent:
-                    value *= X[:, axis] ** exponent
-            columns.append(value)
-        return np.column_stack(columns)
-
-    def evaluate(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Return fitted q and its Jacobian with respect to the scaled state."""
-        X = np.atleast_2d(np.asarray(X, dtype=float))
-        q = self._design(X) @ self.coef_
-        grad_q = np.zeros((X.shape[0], self.Y.shape[1], self.n_features), dtype=float)
-
-        for term, power in enumerate(self.powers):
-            coef = self.coef_[term]
-            for diff_axis, exponent in enumerate(power):
-                if exponent == 0:
-                    continue
-                value = np.full(X.shape[0], exponent, dtype=float)
-                for axis, axis_power in enumerate(power):
-                    reduced_power = axis_power - 1 if axis == diff_axis else axis_power
-                    if reduced_power:
-                        value *= X[:, axis] ** reduced_power
-                grad_q[:, :, diff_axis] += value[:, np.newaxis] * coef
-        return q, grad_q
-
-
-class RBFVectorProvider:
-    """Gaussian kernel ridge fit for vector flux with analytic derivatives."""
-
-    def __init__(self, X: np.ndarray, Y: np.ndarray, gamma: float = 1.0, ridge_strength: float = 1.0e-8):
-        self.X = np.asarray(X, dtype=float)
-        self.Y = np.asarray(Y, dtype=float)
-        self.gamma = float(gamma)
-        self.ridge_strength = float(ridge_strength)
-        K = self._kernel(self.X, self.X)
-        self.alpha_ = np.linalg.solve(K + self.ridge_strength * np.eye(K.shape[0]), self.Y)
-
-    def _kernel(self, X1: np.ndarray, X2: np.ndarray) -> np.ndarray:
-        diff = X1[:, np.newaxis, :] - X2[np.newaxis, :, :]
-        return np.exp(-self.gamma * np.sum(diff**2, axis=-1))
-
-    def evaluate(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Return fitted q and its Jacobian with respect to the scaled state."""
-        X = np.atleast_2d(np.asarray(X, dtype=float))
-        K = self._kernel(X, self.X)
-        q = K @ self.alpha_
-        diff = X[:, np.newaxis, :] - self.X[np.newaxis, :, :]
-        dK = -2.0 * self.gamma * K[:, :, np.newaxis] * diff
-        grad_q = np.einsum("nmf,md->ndf", dK, self.alpha_)
-        return q, grad_q
-
-
 class BaseGPVectorProvider:
     """Adapter for Methods.OracleDataMethods.Multidimensional.baseGP.GPFluxST."""
 
@@ -469,6 +357,50 @@ class BaseGPVectorProvider:
             Y_new,
             s_query=X_query[:, : self.dim],
             T_query=X_query[:, self.dim : self.dim + 1],
+        )
+
+
+class RFFBaseGPVectorProvider(BaseGPVectorProvider):
+    """Adapter for Methods.OracleDataMethods.Multidimensional.rff_baseGP.GPFluxST."""
+
+    def __init__(
+        self,
+        X: np.ndarray,
+        Y: np.ndarray,
+        dim: int,
+        *,
+        learn_neg_flux: bool = True,
+        jitter: float = 1.0e-8,
+        kernel_variance: float = 1.0,
+        lengthscale: float | np.ndarray = 1.2,
+        noise_variance: float = 1.0e-3,
+        n_rff_features: int = 500,
+        alpha: float = 0.0,
+        p: float = 2.0,
+        random_state: int = 0,
+        max_cache_size: int | None = None,
+    ) -> None:
+        if RFFBaseGPFluxST is None:
+            raise ImportError(
+                "bb3d_rff_basegp requires Methods.OracleDataMethods.Multidimensional.rff_baseGP"
+            )
+        self.dim = int(dim)
+        X = np.asarray(X, dtype=float)
+        Y = np.asarray(Y, dtype=float)
+        self.model = RFFBaseGPFluxST(
+            X[:, : self.dim],
+            X[:, self.dim : self.dim + 1],
+            Y,
+            learn_neg_flux=learn_neg_flux,
+            jitter=jitter,
+            kernel_variance=kernel_variance,
+            lengthscale=lengthscale,
+            noise_variance=noise_variance,
+            n_rff_features=n_rff_features,
+            alpha=alpha,
+            p=p,
+            random_state=random_state,
+            max_cache_size=max_cache_size,
         )
 
 
@@ -570,87 +502,6 @@ class MonotoneGPVectorProvider:
         )
 
 
-class DerivativeGPVectorProvider:
-    """Adapter for the multidimensional finite-difference-field DerivGP.
-
-    This provider is still black-box in the important sense: it never receives
-    exact oracle derivatives. The finite-difference field is built from nearby
-    q-only oracle calls, and the DerivGP smooths those derivative estimates.
-    """
-
-    def __init__(
-        self,
-        field: dict,
-        dim: int,
-        *,
-        kernel_nu: float = 1.5,
-        k_ref: float | None = None,
-        reg_derivative: float = 1.0e-2,
-        jitter: float = 1.0e-8,
-        n_restarts_optimizer: int = 0,
-        random_state: int = 0,
-        max_cache_size: int | None = None,
-    ) -> None:
-        if DerivativeGPFluxST is None:
-            raise ImportError(
-                "bb3d_derivgp requires Methods.OracleDataMethods.Multidimensional.derivGP"
-            )
-        self.dim = int(dim)
-        self.model = DerivativeGPFluxST(
-            field["X_derivative"],
-            field["derivatives"],
-            field["derivative_noise_covariance"],
-            field["anchor_s"],
-            field["anchor_T"],
-            field["anchor_q"],
-            kernel_nu=kernel_nu,
-            k_ref=k_ref,
-            reg_derivative=reg_derivative,
-            jitter=jitter,
-            n_restarts_optimizer=n_restarts_optimizer,
-            random_state=random_state,
-            max_cache_size=max_cache_size,
-        )
-
-    def evaluate(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Return DerivGP q and concatenate dq/dgrad_T with dq/dT."""
-        X = np.atleast_2d(np.asarray(X, dtype=float))
-        q, dq_ds, dq_dT = self.model.evaluate(
-            X[:, : self.dim],
-            X[:, self.dim : self.dim + 1],
-        )
-        q = np.asarray(q, dtype=float).reshape(X.shape[0], self.dim)
-        dq_ds = np.asarray(dq_ds, dtype=float).reshape(X.shape[0], self.dim, self.dim)
-        dq_dT = np.asarray(dq_dT, dtype=float).reshape(X.shape[0], self.dim, 1)
-        return q, np.concatenate([dq_ds, dq_dT], axis=2)
-
-    def uncertainty(self, X: np.ndarray) -> float:
-        """Use derivative posterior variance as the refinement signal."""
-        X = np.atleast_2d(np.asarray(X, dtype=float))
-        _, _, _, var_q, var_dq_ds, var_dq_dT = self.model.evaluate(
-            X[:, : self.dim],
-            X[:, self.dim : self.dim + 1],
-            return_variance=True,
-        )
-        derivative_variance = np.concatenate(
-            [
-                np.asarray(var_dq_ds, dtype=float).reshape(X.shape[0], -1),
-                np.asarray(var_dq_dT, dtype=float).reshape(X.shape[0], -1),
-            ],
-            axis=1,
-        )
-        return float(np.mean(var_q) + np.nanmax(np.maximum(derivative_variance, 0.0)))
-
-    def update(self, field: dict, X_query: np.ndarray) -> None:
-        """Update the derivative posterior with a newly built local FD field."""
-        X_query = np.atleast_2d(np.asarray(X_query, dtype=float))
-        self.model.update_posterior(
-            field,
-            s_query=X_query[:, : self.dim].reshape(-1),
-            T_query=X_query[:, self.dim : self.dim + 1].reshape(-1),
-        )
-
-
 class AdaptiveLocalFluxProvider:
     """Adaptive local vector surrogate around queried ``(grad_T, T)`` states."""
 
@@ -743,7 +594,7 @@ class AdaptiveLocalFluxProvider:
                 self.options.use_posterior_updates
                 and isinstance(
                     self.surrogate,
-                    (BaseGPVectorProvider, MonotoneGPVectorProvider, DerivativeGPVectorProvider),
+                    (BaseGPVectorProvider, MonotoneGPVectorProvider, RFFBaseGPVectorProvider),
                 )
             ):
                 self._update_surrogate(new_samples, state)
@@ -768,86 +619,13 @@ class AdaptiveLocalFluxProvider:
         b = jac[:, self.dim]
         return q, A, b
 
-    def _build_derivative_field(self, state: np.ndarray) -> dict:
-        """Build a local FD derivative field from q-only oracle samples."""
-        if build_md_finite_difference_field is None:
-            raise ImportError(
-                "bb3d_derivgp requires the multidimensional finite-difference field builder"
-            )
-        anchor = self._to_scaled(np.asarray(state, dtype=float).reshape(1, self.state_dim))[0]
-
-        def cached_scaled_oracle(s_scaled, T_scaled):
-            s_arr = np.asarray(s_scaled, dtype=float)
-            T_arr = np.asarray(T_scaled, dtype=float)
-            if s_arr.shape[-1] != self.dim:
-                raise ValueError(f"s_scaled final axis must have length {self.dim}")
-            shape = s_arr.shape[:-1]
-            T_arr = np.broadcast_to(T_arr, shape + (1,))
-            X_scaled = np.concatenate(
-                [s_arr.reshape(-1, self.dim), T_arr.reshape(-1, 1)],
-                axis=1,
-            )
-            X_phys = self._from_scaled(X_scaled)
-            values = []
-            for point in X_phys:
-                sample_point = self._clip_sample_state(point)
-                values.append(self.cache.evaluate(sample_point))
-            return np.asarray(values, dtype=float).reshape(shape + (self.dim,))
-
-        fd_n_s = self.model_options.get("fd_n_s", 2)
-        fd_n_T = self.model_options.get("fd_n_t", 2)
-        return build_md_finite_difference_field(
-            cached_scaled_oracle,
-            anchor[: self.dim],
-            anchor[self.dim : self.dim + 1],
-            s_radius=self.model_options.get(
-                "fd_s_radius",
-                self.options.effective_sample_radius,
-            ),
-            T_radius=self.model_options.get(
-                "fd_t_radius",
-                self.options.effective_sample_radius,
-            ),
-            n_s=fd_n_s,
-            n_T=fd_n_T,
-            h_s=self.model_options.get("fd_h_s", None),
-            h_T=self.model_options.get("fd_h_t", None),
-            repeats=int(self.model_options.get("fd_repeats", 1)),
-            jitter=float(self.model_options.get("jitter", 1.0e-8)),
-            n_restarts_optimizer=int(
-                self.model_options.get("n_restarts_optimizer", 0)
-            ),
-            noise_variance_floor=float(
-                self.model_options.get("fd_noise_variance_floor", 1.0e-12)
-            ),
-        )
-
     def _fit_surrogate(self) -> None:
         """Fit the selected local model to cached oracle samples."""
         X_phys, Y = self.cache.arrays()
-        if Y.shape[0] < max(self.state_dim + 1, 6) and self.method_key not in {
-            "bb3d_derivgp",
-            "bb_derivgp",
-            "derivgp",
-            "derivativegp",
-        }:
+        if Y.shape[0] < max(self.state_dim + 1, 6):
             raise RuntimeError("not enough blackbox samples to fit local surrogate")
         X = self._to_scaled(X_phys)
-        if self.method_key in {"bb3d_poly", "bb_poly", "poly"}:
-            self.surrogate = PolynomialVectorProvider(
-                X,
-                Y,
-                degree=int(self.model_options.get("degree", 2)),
-                ridge_strength=float(self.model_options.get("ridge_strength", 1.0e-10)),
-            )
-        elif self.method_key in {"bb3d_rbf", "bb_rbf", "rbf"}:
-            self.surrogate = RBFVectorProvider(
-                X,
-                Y,
-                gamma=float(self.model_options.get("gamma", 1.0)),
-                ridge_strength=float(self.model_options.get("ridge_strength", 1.0e-8)),
-            )
-        elif self.method_key in {"bb3d_basegp", "bb_basegp", "basegp"}:
+        if self.method_key in {"bb3d_basegp", "bb_basegp", "basegp"}:
             self.surrogate = BaseGPVectorProvider(
                 X,
                 Y,
@@ -865,6 +643,27 @@ class AdaptiveLocalFluxProvider:
                 optimize_hyperparameters=bool(
                     self.model_options.get("optimize_hyperparameters", False)
                 ),
+                max_cache_size=self.options.max_points(self.state_dim),
+            )
+        elif self.method_key in {
+            "bb3d_rff_basegp",
+            "bb_rff_basegp",
+            "rff_basegp",
+            "rff_base_gp",
+        }:
+            self.surrogate = RFFBaseGPVectorProvider(
+                X,
+                Y,
+                self.dim,
+                learn_neg_flux=bool(self.model_options.get("learn_neg_flux", True)),
+                jitter=float(self.model_options.get("jitter", 1.0e-8)),
+                kernel_variance=float(self.model_options.get("kernel_variance", 1.0)),
+                lengthscale=self.model_options.get("lengthscale", 1.2),
+                noise_variance=float(self.model_options.get("noise_variance", 1.0e-3)),
+                n_rff_features=int(self.model_options.get("n_rff_features", 500)),
+                alpha=float(self.model_options.get("alpha", 0.0)),
+                p=float(self.model_options.get("p", 2.0)),
+                random_state=int(self.model_options.get("rng_seed", 0)),
                 max_cache_size=self.options.max_points(self.state_dim),
             )
         elif self.method_key in {
@@ -900,33 +699,6 @@ class AdaptiveLocalFluxProvider:
                 ),
                 max_cache_size=self.options.max_points(self.state_dim),
             )
-        elif self.method_key in {
-            "bb3d_derivgp",
-            "bb_derivgp",
-            "derivgp",
-            "derivativegp",
-        }:
-            if self.current_state_for_fit is None:
-                raise RuntimeError("DerivativeGP requires a current query state")
-            field = self._build_derivative_field(self.current_state_for_fit)
-            self.surrogate = DerivativeGPVectorProvider(
-                field,
-                self.dim,
-                kernel_nu=float(self.model_options.get("kernel_nu", 1.5)),
-                k_ref=self.model_options.get("k_ref", None),
-                reg_derivative=float(self.model_options.get("reg_derivative", 1.0e-2)),
-                jitter=float(self.model_options.get("jitter", 1.0e-8)),
-                n_restarts_optimizer=int(
-                    self.model_options.get("n_restarts_optimizer", 0)
-                ),
-                random_state=int(self.model_options.get("rng_seed", 0)),
-                max_cache_size=int(
-                    self.model_options.get(
-                        "derivgp_max_centers",
-                        self.options.max_points(self.state_dim),
-                    )
-                ),
-            )
         else:
             raise ValueError(f"unknown 3D blackbox method: {self.method_key}")
         self.surrogate_fit_count += 1
@@ -934,12 +706,6 @@ class AdaptiveLocalFluxProvider:
     def _update_surrogate(self, X_phys_new: np.ndarray, query_state: np.ndarray) -> None:
         """Update a GP-style surrogate without rebuilding it from scratch."""
         X_query = self._to_scaled(np.asarray(query_state, dtype=float).reshape(1, self.state_dim))
-        if isinstance(self.surrogate, DerivativeGPVectorProvider):
-            field = self._build_derivative_field(query_state)
-            self.surrogate.update(field, X_query)
-            self.surrogate_fit_count += 1
-            return
-
         X_phys_new = np.atleast_2d(np.asarray(X_phys_new, dtype=float))
         if X_phys_new.size == 0:
             return
@@ -955,43 +721,24 @@ class AdaptiveLocalFluxProvider:
         jac_physical = jac_scaled[0] / self.scale[np.newaxis, :]
         return q[0], jac_physical
 
-    def _validation_mse(self, state: np.ndarray) -> float:
-        """Estimate local fit error using nearby q-only oracle checks."""
-        points = self._random_ball_samples(state, max(4, self.state_dim))
-        errors = []
-        for point in points:
-            sample_point = self._clip_sample_state(point)
-            q_true = self.cache.evaluate(sample_point)
-            q_hat, _ = self._surrogate_evaluate(sample_point)
-            denom = np.maximum(1.0, np.abs(q_true))
-            errors.append(np.mean(((q_hat - q_true) / denom) ** 2))
-        return float(np.mean(errors)) if errors else 0.0
-
     def _uncertainty(self, state: np.ndarray) -> float:
-        """Use GP posterior variance when available; otherwise validate by oracle calls."""
+        """Use GP posterior variance as the adaptive refinement signal."""
         if isinstance(
             self.surrogate,
-            (BaseGPVectorProvider, MonotoneGPVectorProvider, DerivativeGPVectorProvider),
+            (BaseGPVectorProvider, MonotoneGPVectorProvider, RFFBaseGPVectorProvider),
         ):
             scaled = self._to_scaled(state.reshape(1, self.state_dim))
             if isinstance(self.surrogate, MonotoneGPVectorProvider):
                 self.uncertainty_source = "monotonegp_posterior_variance"
-            elif isinstance(self.surrogate, DerivativeGPVectorProvider):
-                self.uncertainty_source = "derivgp_derivative_variance"
+            elif isinstance(self.surrogate, RFFBaseGPVectorProvider):
+                self.uncertainty_source = "rff_basegp_posterior_variance"
             else:
                 self.uncertainty_source = "basegp_posterior_variance"
             return self.surrogate.uncertainty(scaled)
-        self.uncertainty_source = "local_oracle_validation_mse"
-        return self._validation_mse(state)
+        raise TypeError(f"unsupported surrogate type: {type(self.surrogate).__name__}")
 
     def _uncertainty_tolerance(self) -> float:
-        """Use variance tolerance for GP-style uncertainty and MSE otherwise."""
-        if isinstance(
-            self.surrogate,
-            (BaseGPVectorProvider, MonotoneGPVectorProvider, DerivativeGPVectorProvider),
-        ):
-            return float(self.options.variance_tolerance)
-        return float(self.options.mse_tolerance)
+        return float(self.options.variance_tolerance)
 
     def _sample_neighborhood(self, state: np.ndarray, n_points: int) -> np.ndarray:
         """Add structured/random local samples and return the sampled states."""
@@ -1033,7 +780,7 @@ class AdaptiveLocalFluxProvider:
         return samples
 
     def _random_ball_samples(self, state: np.ndarray, n_points: int) -> list[np.ndarray]:
-        radius = self.options.validation_radius
+        radius = self.options.effective_sample_radius
         scaled_center = self._to_scaled(state.reshape(1, self.state_dim))[0]
         samples = []
         for _ in range(n_points):
@@ -1089,10 +836,8 @@ class AdaptiveLocalFluxProvider:
                 "bb_out_of_bounds_query_count": self.out_of_bounds_query_count,
                 "bb_clipped_eval_count": self.out_of_bounds_query_count,
                 "bb_sample_radius": self.options.effective_sample_radius,
-                "bb_validation_radius": self.options.validation_radius,
                 "bb_cache_limit": self.options.max_points(self.state_dim),
                 "bb_variance_tolerance": self.options.variance_tolerance,
-                "bb_mse_tolerance": self.options.mse_tolerance,
             }
         )
         return diag
@@ -1151,27 +896,10 @@ def build_provider(
     if len(grad_bounds) < dim:
         raise ValueError(f"grad_bounds must provide at least {dim} bounds")
 
-    derivgp_keys = {"bb3d_derivgp", "bb_derivgp", "derivgp", "derivativegp"}
-    if method_key in derivgp_keys:
-        method_options.setdefault("sample_radius", 0.35)
-        method_options.setdefault("fd_s_radius", 0.35)
-        method_options.setdefault("fd_t_radius", 0.35)
-        method_options.setdefault("fd_n_s", 3)
-        method_options.setdefault("fd_n_t", 3)
-        method_options.setdefault("kernel_nu", 2.5)
-        method_options.setdefault("reg_derivative", 1.0e-2)
-        method_options.setdefault("variance_tolerance", 3000.0)
-        method_options.setdefault("max_refinements_per_eval", 1)
-        method_options.setdefault("max_total_refinements", 2)
-
     options = AdaptiveBB3DOptions(
         grad_bounds=tuple(tuple(v) for v in grad_bounds),
         T_bounds=method_options.get("T_bounds", AdaptiveBB3DOptions.T_bounds),
         sample_radius=method_options.get("sample_radius", AdaptiveBB3DOptions.sample_radius),
-        validation_radius_factor=method_options.get(
-            "validation_radius_factor",
-            AdaptiveBB3DOptions.validation_radius_factor,
-        ),
         initial_points_per_dim=method_options.get(
             "initial_points_per_dim",
             AdaptiveBB3DOptions.initial_points_per_dim,
@@ -1204,7 +932,6 @@ def build_provider(
             "active_prune_policy",
             AdaptiveBB3DOptions.active_prune_policy,
         ),
-        mse_tolerance=method_options.get("mse_tolerance", AdaptiveBB3DOptions.mse_tolerance),
         variance_tolerance=method_options.get(
             "variance_tolerance",
             AdaptiveBB3DOptions.variance_tolerance,
@@ -1231,5 +958,4 @@ def build_provider(
         "oracle_config": oracle_config,
         "dim": dim,
         "sample_radius": options.effective_sample_radius,
-        "validation_radius": options.validation_radius,
     }

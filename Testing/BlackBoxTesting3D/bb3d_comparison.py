@@ -18,8 +18,8 @@ records solver diagnostics. This mirrors the 1D comparison pattern:
 4. Compare the learned-provider FEM solution to the analytic-oracle FEM
    reference solution.
 
-The boundary data below is deliberately non-affine. For nonlinear flux laws it
-is not treated as an exact solution.
+The boundary data below is deliberately non-affine. It gives the solver a
+nontrivial problem without pretending to be a closed-form exact solution.
 """
 
 from __future__ import annotations
@@ -354,15 +354,15 @@ def comparison(
     seed: int = 0,
     provider_options: dict | None = None,
 ):
-    """Run a small 2D/3D FEM comparison and save one CSV per oracle config.
+    """Run a 2D/3D FEM comparison and save one CSV per oracle config.
 
     Parameters
     ----------
     exp_name:
         Name of the result folder under ``Results``.
     methods:
-        Method strings such as ``"analytic"``, ``"bb3d_poly+degree=2"``,
-        ``"bb3d_rbf+gamma=1.0"``, or ``"bb3d_basegp+lengthscale=1.0"``.
+        Method strings such as ``"analytic"``, ``"bb3d_basegp+lengthscale=1.0"``,
+        ``"bb3d_monotonegp"``, or ``"bb3d_rff_basegp"``.
     oracle_configs:
         Names from ``ORACLE_CONFIGS``.
     dim:
@@ -378,6 +378,11 @@ def comparison(
         Parameters for the linear part of the curved Dirichlet boundary data.
     noisy:
         Whether black-box providers see noisy oracle flux values.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        CSV files written under ``Results/<exp_name>/``.
     """
     if dim not in (2, 3):
         raise ValueError(f"dim must be either 2 or 3, got {dim}.")
@@ -503,8 +508,9 @@ if __name__ == "__main__":
     comparison(
         "bb3d_smoke",
         methods=[
-            "bb3d_poly+degree=2+max_refinements_per_eval=0",
-            "bb3d_rbf+gamma=1.0+max_refinements_per_eval=0",
+            "bb3d_basegp+max_refinements_per_eval=0",
+            "bb3d_monotonegp+max_refinements_per_eval=0",
+            "bb3d_rff_basegp+max_refinements_per_eval=0",
         ],
         oracle_configs=["nonlinear_no_noise"],
         dim=3,

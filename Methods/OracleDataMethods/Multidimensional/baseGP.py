@@ -25,6 +25,8 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 class GPFluxST:
+    """Matern GP surrogate for vector flux q(s, T)."""
+
     def __init__(
         self,
         s_train,

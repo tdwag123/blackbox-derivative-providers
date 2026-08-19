@@ -1,4 +1,9 @@
-"""Two- and three-dimensional nonlinear heat-flux oracle."""
+"""Two- and three-dimensional nonlinear heat-flux oracle.
+
+The comparison code treats this as a black box: normal provider calls receive
+only ``q``. Exact derivatives are available here only for the analytic reference
+model and diagnostic checks.
+"""
 
 from __future__ import annotations
 

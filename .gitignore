@@ -1,7 +1,0 @@
-.DS_Store
-Results/
-.venv/
-.venv_gp/
-__pycache__/
-*.py[cod]
-.vscode/settings.json

@@ -1,3 +1,10 @@
+"""Scalar nonlinear diffusion oracle retained for reference.
+
+The active 2D/3D comparison uses ``bboracle3dDiffusion.py``. This file keeps the
+older one-dimensional flux law and parameter names in the branch for comparison
+with earlier experiments.
+"""
+
 import numpy as np
 
 
